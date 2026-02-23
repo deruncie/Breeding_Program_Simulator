@@ -1,0 +1,174 @@
+select_indices <- function(cohort, stage, phenotype_log, year) {
+  rule <- stage$selection_rule
+  if (length(rule) == 0L) {
+    return(seq_len(cohort$size()))
+  }
+
+  method <- as.character(rule$method %||% "top_proportion")
+  n <- cohort$size()
+
+  if (method == "top_proportion") {
+    prop <- as.numeric(rule$proportion %||% 1)
+    n_keep <- max(1L, floor(n * prop))
+  } else if (method == "truncation") {
+    n_keep <- as.integer(rule$n_selected %||% n)
+    n_keep <- max(1L, min(n_keep, n))
+  } else {
+    stop(sprintf("Unknown selection method: %s", method), call. = FALSE)
+  }
+
+  score_source <- as.character(rule$score_source %||% "random")
+  score <- rep(0, n)
+
+  if (score_source == "phenotype_mean") {
+    ph <- phenotype_log[phenotype_log$cohort_id == cohort$cohort_id & phenotype_log$year <= year, , drop = FALSE]
+    if (nrow(ph) == 0L) {
+      score <- stats::runif(n)
+    } else {
+      agg <- stats::aggregate(phenotype_value ~ individual_id, data = ph, FUN = mean)
+      idx <- match(cohort$individual_ids, agg$individual_id)
+      score <- agg$phenotype_value[idx]
+      score[is.na(score)] <- -Inf
+    }
+  } else if (score_source == "random") {
+    score <- stats::runif(n)
+  } else {
+    stop(sprintf("Unsupported score_source: %s", score_source), call. = FALSE)
+  }
+
+  order(score, decreasing = TRUE)[seq_len(n_keep)]
+}
+
+advance_stage <- function(state, instance_id) {
+  instance <- state$pipeline_instances[[instance_id]]
+  if (is.null(instance) || !isTRUE(instance$active)) {
+    return(invisible(NULL))
+  }
+
+  template <- state$pipeline_templates[[instance$template_id]]
+  current_stage_name <- template$ordered_stages[[instance$current_stage_index]]
+  current_stage <- template$get_stage(current_stage_name)
+  current_cohort <- state$cohorts[[instance$current_cohort_id]]
+
+  next_stage_name <- current_stage$output_stage
+  if (is.null(next_stage_name)) {
+    next_stage_name <- template$next_stage_name(current_stage_name)
+  }
+
+  if (is.null(next_stage_name)) {
+    instance$active <- FALSE
+    return(invisible(NULL))
+  }
+
+  sel_idx <- select_indices(current_cohort, current_stage, state$phenotype_log, state$year)
+  transform_fn <- current_stage$selection_rule$transform_fn
+
+  if (is.function(transform_fn)) {
+    out <- transform_fn(
+      pop = current_cohort$pop,
+      selected_idx = sel_idx,
+      state = state,
+      cohort = current_cohort,
+      stage = current_stage,
+      next_stage = template$get_stage(next_stage_name)
+    )
+    validate_required_names(out, c("pop", "individual_ids"), "transform_fn output")
+    new_pop <- out$pop
+    new_ids <- as.character(out$individual_ids)
+    parent_cohort_id <- current_cohort$cohort_id
+  } else {
+    # Default: stage-to-stage subset carries the same global individual IDs.
+    new_pop <- pop_subset(current_cohort$pop, sel_idx)
+    new_ids <- current_cohort$individual_ids[sel_idx]
+    parent_cohort_id <- current_cohort$cohort_id
+  }
+
+  new_cohort_id <- state$next_cohort_id()
+  new_cohort <- Cohort$new(
+    cohort_id = new_cohort_id,
+    pipeline_instance_id = instance$instance_id,
+    stage_name = next_stage_name,
+    year_entered = state$year,
+    pop = new_pop,
+    individual_ids = new_ids,
+    parent_cohort_id = parent_cohort_id
+  )
+
+  state$add_cohort(new_cohort)
+
+  instance$current_stage_index <- instance$current_stage_index + 1L
+  instance$current_cohort_id <- new_cohort_id
+
+  if (instance$current_stage_index > length(template$ordered_stages)) {
+    instance$active <- FALSE
+  }
+
+  invisible(new_cohort_id)
+}
+
+run_one_year <- function(
+  state,
+  year,
+  crossing_schedule_fn = NULL,
+  gs_update_fn = NULL,
+  cost_update_fn = NULL
+) {
+  state$year <- as.integer(year)
+
+  if (is.function(crossing_schedule_fn)) {
+    crossing_schedule_fn(state, year)
+  }
+
+  active_ids <- names(state$pipeline_instances)[vapply(
+    state$pipeline_instances,
+    function(x) isTRUE(x$active),
+    logical(1)
+  )]
+
+  for (instance_id in active_ids) {
+    inst <- state$pipeline_instances[[instance_id]]
+    if (state$stage_duration_complete(inst)) {
+      advance_stage(state, instance_id)
+    }
+  }
+
+  phenotyping_cohorts <- unique(vapply(
+    state$pipeline_instances,
+    function(inst) inst$current_cohort_id,
+    character(1)
+  ))
+  for (cohort_id in phenotyping_cohorts) {
+    state$run_phenotyping_for_cohort(cohort_id)
+  }
+
+  if (is.function(gs_update_fn)) {
+    gs_update_fn(state, year)
+  }
+
+  if (is.function(cost_update_fn)) {
+    cost_update_fn(state, year)
+  }
+
+  invisible(state)
+}
+
+simulate_years <- function(
+  state,
+  n_years,
+  start_year = state$year + 1L,
+  crossing_schedule_fn = NULL,
+  gs_update_fn = NULL,
+  cost_update_fn = NULL
+) {
+  years <- seq.int(as.integer(start_year), length.out = as.integer(n_years))
+  for (yr in years) {
+    run_one_year(
+      state = state,
+      year = yr,
+      crossing_schedule_fn = crossing_schedule_fn,
+      gs_update_fn = gs_update_fn,
+      cost_update_fn = cost_update_fn
+    )
+  }
+  invisible(state)
+}

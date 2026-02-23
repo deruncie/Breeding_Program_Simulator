@@ -1,0 +1,65 @@
+template_id: "grain_pipeline_v1"
+ordered_stages:
+  - "INBRED"
+  - "PYT"
+  - "AYT"
+  - "EYT"
+stage_definitions:
+  INBRED:
+    name: "INBRED"
+    duration_years: 1
+    phenotyping_rules:
+      traits: ["yield", "height"]
+      n_environments: 1
+      reps: 1
+      error_variance: 1.0
+    selection_rule:
+      method: "top_proportion"
+      proportion: 0.5
+      score_source: "phenotype_mean"
+    parent_eligibility: true
+    output_stage: "PYT"
+
+  PYT:
+    name: "PYT"
+    duration_years: 1
+    phenotyping_rules:
+      traits: ["yield", "height"]
+      n_environments: 2
+      reps: 2
+      error_variance: 0.8
+    selection_rule:
+      method: "top_proportion"
+      proportion: 0.3
+      score_source: "phenotype_mean"
+    parent_eligibility: true
+    output_stage: "AYT"
+
+  AYT:
+    name: "AYT"
+    duration_years: 1
+    phenotyping_rules:
+      traits: ["yield", "height"]
+      n_environments: 4
+      reps: 2
+      error_variance: 0.6
+    selection_rule:
+      method: "truncation"
+      n_selected: 20
+      score_source: "phenotype_mean"
+    parent_eligibility: true
+    output_stage: "EYT"
+
+  EYT:
+    name: "EYT"
+    duration_years: 1
+    phenotyping_rules:
+      traits: ["yield", "height"]
+      n_environments: 8
+      reps: 2
+      error_variance: 0.4
+    selection_rule:
+      method: "truncation"
+      n_selected: 10
+      score_source: "phenotype_mean"
+    parent_eligibility: true

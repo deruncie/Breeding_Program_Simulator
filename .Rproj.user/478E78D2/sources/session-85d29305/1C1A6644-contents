@@ -1,0 +1,263 @@
+ProgramState <- R6Class(
+  "ProgramState",
+  public = list(
+    year = NULL,
+    pipeline_templates = NULL,
+    pipeline_instances = NULL,
+    cohorts = NULL,
+    phenotype_log = NULL,
+    individual_registry = NULL,
+    GS_models = NULL,
+    cost_log = NULL,
+
+    .counters = NULL,
+
+    initialize = function(year = 0L) {
+      self$year <- as.integer(year)
+      self$pipeline_templates <- list()
+      self$pipeline_instances <- list()
+      self$cohorts <- list()
+      self$phenotype_log <- empty_phenotype_log()
+      self$individual_registry <- empty_individual_registry()
+      self$GS_models <- list()
+      self$cost_log <- empty_cost_log()
+      self$.counters <- list(instance = 0L, cohort = 0L, individual = 0L)
+    },
+
+    add_pipeline_template = function(template) {
+      stopifnot(inherits(template, "PipelineTemplate"))
+      self$pipeline_templates[[template$template_id]] <- template
+      invisible(template$template_id)
+    },
+
+    next_instance_id = function() {
+      self$.counters$instance <- self$.counters$instance + 1L
+      new_id("inst", self$.counters$instance)
+    },
+
+    next_cohort_id = function() {
+      self$.counters$cohort <- self$.counters$cohort + 1L
+      new_id("cohort", self$.counters$cohort)
+    },
+
+    next_individual_ids = function(n) {
+      n <- as.integer(n)
+      start <- self$.counters$individual + 1L
+      end <- self$.counters$individual + n
+      self$.counters$individual <- end
+      sprintf("ind_%07d", seq.int(start, end))
+    },
+
+    register_individuals = function(
+      individual_ids,
+      origin_cohort_id,
+      origin_pipeline_instance_id,
+      generation,
+      parent_ids = NA_character_
+    ) {
+      rows <- data.frame(
+        individual_id = as.character(individual_ids),
+        origin_cohort_id = as.character(origin_cohort_id),
+        origin_pipeline_instance_id = as.character(origin_pipeline_instance_id),
+        generation = as.integer(generation),
+        parent_ids = as.character(parent_ids),
+        stringsAsFactors = FALSE
+      )
+      self$individual_registry <- rbind(self$individual_registry, rows)
+      invisible(rows)
+    },
+
+    add_pipeline_instance = function(instance) {
+      stopifnot(inherits(instance, "PipelineInstance"))
+      self$pipeline_instances[[instance$instance_id]] <- instance
+      invisible(instance$instance_id)
+    },
+
+    add_cohort = function(cohort) {
+      stopifnot(inherits(cohort, "Cohort"))
+      self$cohorts[[cohort$cohort_id]] <- cohort
+      invisible(cohort$cohort_id)
+    },
+
+    create_initial_instance = function(template_id, pop, start_year = self$year, generation = 0L) {
+      template <- self$pipeline_templates[[template_id]]
+      if (is.null(template)) {
+        stop(sprintf("Unknown template_id: %s", template_id), call. = FALSE)
+      }
+
+      instance_id <- self$next_instance_id()
+      cohort_id <- self$next_cohort_id()
+
+      n_ind <- pop_n_ind(pop)
+      individual_ids <- self$next_individual_ids(n_ind)
+
+      instance <- PipelineInstance$new(
+        instance_id = instance_id,
+        template_id = template_id,
+        start_year = as.integer(start_year),
+        current_stage_index = 1L,
+        current_cohort_id = cohort_id,
+        active = TRUE
+      )
+
+      cohort <- Cohort$new(
+        cohort_id = cohort_id,
+        pipeline_instance_id = instance_id,
+        stage_name = template$first_stage_name(),
+        year_entered = as.integer(start_year),
+        pop = pop,
+        individual_ids = individual_ids,
+        parent_cohort_id = NULL
+      )
+
+      self$add_pipeline_instance(instance)
+      self$add_cohort(cohort)
+      self$register_individuals(
+        individual_ids = individual_ids,
+        origin_cohort_id = cohort_id,
+        origin_pipeline_instance_id = instance_id,
+        generation = generation,
+        parent_ids = NA_character_
+      )
+
+      invisible(instance_id)
+    },
+
+    stage_duration_complete = function(instance) {
+      template <- self$pipeline_templates[[instance$template_id]]
+      stage_name <- template$ordered_stages[[instance$current_stage_index]]
+      stage <- template$get_stage(stage_name)
+      cohort <- self$cohorts[[instance$current_cohort_id]]
+      years_at_stage <- self$year - cohort$year_entered + 1L
+      years_at_stage >= stage$duration_years
+    },
+
+    append_phenotype_log = function(rows) {
+      needed <- c(
+        "individual_id", "cohort_id", "pipeline_instance_id", "stage", "year", "trait",
+        "environment", "rep", "phenotype_value", "error_variance"
+      )
+      validate_required_names(rows, needed, "Phenotype rows")
+      self$phenotype_log <- rbind(self$phenotype_log, rows[, needed, drop = FALSE])
+      invisible(nrow(rows))
+    },
+
+    run_phenotyping_for_cohort = function(cohort_id) {
+      cohort <- self$cohorts[[cohort_id]]
+      instance <- self$pipeline_instances[[cohort$pipeline_instance_id]]
+      template <- self$pipeline_templates[[instance$template_id]]
+      stage <- template$get_stage(cohort$stage_name)
+      rules <- stage$phenotyping_rules
+      if (length(rules) == 0L) {
+        return(invisible(NULL))
+      }
+
+      if (is.function(rules$event_fn)) {
+        rows <- rules$event_fn(
+          pop = cohort$pop,
+          individual_ids = cohort$individual_ids,
+          cohort_id = cohort$cohort_id,
+          pipeline_instance_id = cohort$pipeline_instance_id,
+          stage = cohort$stage_name,
+          year = self$year
+        )
+        self$append_phenotype_log(rows)
+        return(invisible(rows))
+      }
+
+      traits <- as.character(rules$traits %||% "trait1")
+      n_env <- as.integer(rules$n_environments %||% 1L)
+      reps <- as.integer(rules$reps %||% 1L)
+      error_var <- as.numeric(rules$error_variance %||% 1)
+
+      rows <- expand.grid(
+        individual_id = cohort$individual_ids,
+        trait = traits,
+        environment = seq_len(n_env),
+        rep = seq_len(reps),
+        stringsAsFactors = FALSE
+      )
+      rows$cohort_id <- cohort$cohort_id
+      rows$pipeline_instance_id <- cohort$pipeline_instance_id
+      rows$stage <- cohort$stage_name
+      rows$year <- self$year
+      rows$phenotype_value <- stats::rnorm(nrow(rows), mean = 0, sd = sqrt(error_var))
+      rows$error_variance <- error_var
+
+      rows <- rows[, c(
+        "individual_id", "cohort_id", "pipeline_instance_id", "stage", "year", "trait",
+        "environment", "rep", "phenotype_value", "error_variance"
+      )]
+      self$append_phenotype_log(rows)
+      invisible(rows)
+    },
+
+    eligible_parent_cohorts = function(parent_eligible_stages) {
+      parent_eligible_stages <- as.character(parent_eligible_stages)
+      keep <- vapply(
+        self$cohorts,
+        function(ch) ch$stage_name %in% parent_eligible_stages,
+        logical(1)
+      )
+      self$cohorts[keep]
+    },
+
+    create_crossing_instance = function(
+      template_id,
+      parent_eligible_stages,
+      selector_fn,
+      crossing_fn,
+      start_year = self$year,
+      generation = 1L
+    ) {
+      parent_cohorts <- self$eligible_parent_cohorts(parent_eligible_stages)
+      if (length(parent_cohorts) == 0L) {
+        stop("No parent-eligible cohorts found", call. = FALSE)
+      }
+
+      selected <- selector_fn(parent_cohorts, self)
+      # selected must include: pop, parent_ids
+      validate_required_names(selected, c("pop", "parent_ids"), "selector_fn output")
+
+      child <- crossing_fn(selected$pop, self)
+      validate_required_names(child, c("pop"), "crossing_fn output")
+
+      instance_id <- self$next_instance_id()
+      cohort_id <- self$next_cohort_id()
+      template <- self$pipeline_templates[[template_id]]
+      n_ind <- pop_n_ind(child$pop)
+      child_ids <- self$next_individual_ids(n_ind)
+
+      instance <- PipelineInstance$new(
+        instance_id = instance_id,
+        template_id = template_id,
+        start_year = as.integer(start_year),
+        current_stage_index = 1L,
+        current_cohort_id = cohort_id,
+        active = TRUE
+      )
+
+      cohort <- Cohort$new(
+        cohort_id = cohort_id,
+        pipeline_instance_id = instance_id,
+        stage_name = template$first_stage_name(),
+        year_entered = as.integer(start_year),
+        pop = child$pop,
+        individual_ids = child_ids,
+        parent_cohort_id = paste(unique(vapply(parent_cohorts, function(x) x$cohort_id, character(1))), collapse = ";")
+      )
+
+      self$add_pipeline_instance(instance)
+      self$add_cohort(cohort)
+      self$register_individuals(
+        individual_ids = child_ids,
+        origin_cohort_id = cohort_id,
+        origin_pipeline_instance_id = instance_id,
+        generation = generation,
+        parent_ids = paste(selected$parent_ids, collapse = ";")
+      )
+
+      invisible(instance_id)
+    }
+  )
+)

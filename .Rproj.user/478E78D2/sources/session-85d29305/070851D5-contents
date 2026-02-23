@@ -1,0 +1,27 @@
+pop_n_ind <- function(pop) {
+  out <- tryCatch(nrow(pop), error = function(e) NA_integer_)
+  if (length(out) == 1L && !is.na(out)) {
+    return(as.integer(out))
+  }
+
+  if ("nInd" %in% methods::slotNames(pop)) {
+    return(as.integer(pop@nInd))
+  }
+  if (!is.null(pop$nInd)) {
+    return(as.integer(pop$nInd))
+  }
+
+  stop("Unable to determine number of individuals for provided pop object", call. = FALSE)
+}
+
+pop_subset <- function(pop, idx) {
+  idx <- as.integer(idx)
+  if (is.data.frame(pop) || is.matrix(pop)) {
+    return(pop[idx, , drop = FALSE])
+  }
+  out <- tryCatch(pop[idx], error = function(e) NULL)
+  if (!is.null(out)) {
+    return(out)
+  }
+  stop("Unable to subset provided pop object with [idx]", call. = FALSE)
+}

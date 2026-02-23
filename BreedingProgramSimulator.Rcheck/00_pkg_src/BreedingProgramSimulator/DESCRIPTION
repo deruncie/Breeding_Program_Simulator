@@ -1,0 +1,16 @@
+Package: BreedingProgramSimulator
+Type: Package
+Title: Stateful Event Driven Breeding Program Simulator on AlphaSimR
+Version: 0.1.0
+Authors@R: person(given = "DER", family = "User", role = c("aut", "cre"), email = "user@example.com")
+Description: Stateful, event-driven architecture for overlapping plant breeding pipeline simulations built on top of AlphaSimR.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Depends: R (>= 4.1.0)
+Imports: methods
+Suggests: testthat (>= 3.0.0), ggplot2, AlphaSimR
+Config/testthat/edition: 3
+NeedsCompilation: no
+Packaged: 2026-02-23 21:23:00 UTC; deruncie
+Author: DER User [aut, cre]
+Maintainer: DER User <user@example.com>
