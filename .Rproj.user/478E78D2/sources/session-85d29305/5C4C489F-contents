@@ -27,30 +27,6 @@ make_cross_plan_no_self <- function(n_parents, n_crosses) {
   cbind(p1, p2)
 }
 
-bp_debug_break <- function(state, cfg, where = NULL, year = NULL, tick = NULL) {
-  if (!isTRUE(cfg$debug %||% FALSE)) return(invisible(NULL))
-
-  if (is.null(tick)) tick <- as.integer(state$time$tick)
-  if (is.null(year) && !is.null(cfg$ticks_per_year)) {
-    year <- as.integer(floor(tick / as.integer(cfg$ticks_per_year)) + 1L)
-  }
-  if (is.null(where)) {
-    where <- as.character(sys.call(-1)[[1]])
-  }
-
-  if (!is.null(cfg$debug_after_year) && !is.null(year) && year < as.integer(cfg$debug_after_year)) {
-    return(invisible(NULL))
-  }
-  if (!is.null(cfg$debug_after_tick) && tick < as.integer(cfg$debug_after_tick)) {
-    return(invisible(NULL))
-  }
-  if (!is.null(cfg$debug_where) && !(where %in% as.character(cfg$debug_where))) {
-    return(invisible(NULL))
-  }
-
-  browser()
-}
-
 run_recurrent_gs_tick <- function(state, cfg) {
   bp_debug_break(state, cfg)
   src <- get_ready_pop(state, stage = cfg$rc_stage, stream = "main", policy = "latest_one", combine = TRUE, silent = TRUE)

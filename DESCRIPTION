@@ -12,6 +12,8 @@ Imports:
     methods
 Suggests:
     testthat (>= 3.0.0),
+    shiny,
     ggplot2,
     AlphaSimR
 Config/testthat/edition: 3
+RoxygenNote: 7.3.2

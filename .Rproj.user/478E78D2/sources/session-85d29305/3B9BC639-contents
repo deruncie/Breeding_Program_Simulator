@@ -19,6 +19,31 @@ bp_init_state <- function(SP, dt = 0.25, start_time = 0, sim = list()) {
   state
 }
 
+# Optional interactive debug breakpoint with config-driven gates.
+bp_debug_break <- function(state, cfg, where = NULL, year = NULL, tick = NULL) {
+  if (!isTRUE(cfg$debug %||% FALSE)) return(invisible(NULL))
+
+  if (is.null(tick)) tick <- as.integer(state$time$tick)
+  if (is.null(year) && !is.null(cfg$ticks_per_year)) {
+    year <- as.integer(floor(tick / as.integer(cfg$ticks_per_year)) + 1L)
+  }
+  if (is.null(where)) {
+    where <- as.character(sys.call(-1)[[1]])
+  }
+
+  if (!is.null(cfg$debug_after_year) && !is.null(year) && year < as.integer(cfg$debug_after_year)) {
+    return(invisible(NULL))
+  }
+  if (!is.null(cfg$debug_after_tick) && tick < as.integer(cfg$debug_after_tick)) {
+    return(invisible(NULL))
+  }
+  if (!is.null(cfg$debug_where) && !(where %in% as.character(cfg$debug_where))) {
+    return(invisible(NULL))
+  }
+
+  browser()
+}
+
 # Cohort metadata table.
 bp_empty_cohorts <- function() {
   data.frame(
