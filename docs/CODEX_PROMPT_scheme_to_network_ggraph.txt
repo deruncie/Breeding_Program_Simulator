@@ -1,0 +1,99 @@
+Create a dual-method scheme-to-network workflow for this repository.
+
+Goal
+- Given a readable breeding scheme script (for example, a file with `run_one_year()` and event verb functions), infer the breeding network in two independent ways and render a clean `ggraph` plot.
+- Method A: careful code-reading inference (agent interprets breeding logic by reading code).
+- Method B: automated extraction from R parsing scripts.
+- Compare A vs B and report mismatches as a validation step.
+
+Requirements
+1. Method A (code-reading inference)
+- Read the scheme file directly and infer:
+  - stage/cohort flow
+  - selection points and selection type (ebv/pheno/random/etc.)
+  - model training and model usage dependencies
+  - genotype information flow
+- Produce a structured edge table from this interpretation.
+- This must be explicit and reproducible in output (do not keep it implicit).
+
+2. Method B (automated parsing extractor)
+- Build/maintain an extractor in `R/scheme_network.R` that:
+- Parses a scheme script with `parse()`.
+- Finds function definitions.
+- Reads the orchestrator function (default `run_one_year`) to get ordered event handlers.
+- Infers edges from calls such as:
+  - `get_ready_pop`, `bp_get_ready_cohorts` (input/source stage)
+  - `put_stage_pop` (output stage)
+  - `run_phenotype_trial` (trial flow and phenotype metadata)
+  - `run_genotyping` (genotype info)
+  - `run_train_gp_model` (model training)
+  - model usage via `state$gs_models[[...]]` (model dependency edges)
+- Resolves simple `cfg` assignments (e.g., `cfg$rc_stage = "RC"`) so labels are human-readable.
+- Returns an edge table and a DOT string.
+
+3. Compare Method A vs Method B
+- Normalize both edge tables to a common schema (from, to, edge_type, key_details).
+- Diff the tables:
+  - edges only in A
+  - edges only in B
+  - same edge with conflicting annotations
+- Summarize likely causes (parser miss, ambiguous code pattern, manual inference mistake).
+- If differences exist, propose a concrete parser fix or explicit override rule.
+
+4. Build a `ggraph` renderer script in `examples/` that:
+- Uses extractor output (no manual edge hardcoding).
+- Uses edge semantics:
+  - Cohort movement edges only for stage progression (green).
+  - Separate info edges only for non-cohort information:
+    - model dependency (`MODEL -> cohort`)
+    - model training (`cohort -> MODEL`)
+    - genotype info as separate `GENO:<cohort>` node -> cohort (no genotype self-loop)
+- Keeps the cohort loop `RC -> RC` if present.
+- For cohort self-loops (for example `RC -> RC`), do **not** draw a curved self-loop arrow.
+  - Instead duplicate the node (e.g., `RC_cycle`) placed very close to the original and replace with:
+    - `RC -> RC_cycle`
+    - `RC_cycle -> RC`
+  - Keep detailed annotations on the primary cohort node only.
+- Annotates cohort nodes with event metadata (prefer event details over verb names when available), including:
+  - phenotype trial nodes: `sel`, `n`, `loc`, `rep`
+  - recurrent cycle cohorts (e.g., RC): at least `sel` and selected `n` where inferable
+- Writes PNG and PDF outputs in `examples/`.
+
+5. Improve readability of layout:
+- Avoid arrows hidden under node labels.
+- Favor clear directional flow with a compact, tall/narrow canvas:
+  - recommended default is two columns:
+    - left: RC/model/genotype info nodes
+    - right: main pipeline cohorts (DH_PIPE -> PYT -> AYT -> EYT -> Variety)
+- If necessary, tune layout (`sugiyama`/`stress`), node label size, edge curvature, and arrow caps.
+- Keep columns close (avoid large empty middle space).
+- Ensure text remains readable on white backgrounds (dark annotation text).
+
+6. Include event metadata on nodes/labels:
+- Prefer `size`, `time`, `varE`, `reps`, `locations` over verb names.
+- For phenotype trials, extract as much metadata as available from `run_phenotype_trial(list(...))`.
+- Prefer metadata inside node boxes (multi-line) rather than long edge labels.
+- Keep edge labels only for non-cohort information edges (model/genotype), unless explicitly requested otherwise.
+
+7. Add a small runner script in `examples/` that:
+- Takes a scheme script path and orchestrator name.
+- Regenerates the network artifacts in one command.
+- Prints extracted handlers and edge table for validation.
+- Prints Method A edge table, Method B edge table, and A-vs-B diff.
+
+8. Validate by running scripts:
+- Execute the renderer.
+- Confirm outputs are written.
+- Summarize key extracted edges in final response.
+
+Coding constraints
+- Keep changes minimal and localized.
+- Do not hardcode scheme-specific edges unless unavoidable; if unavoidable, explain why.
+- Use reproducible scripts so other users can run without AI interpretation.
+
+Final response format
+- Brief summary of what was implemented.
+- Absolute paths to changed files.
+- Absolute paths to generated outputs.
+- Method A vs Method B comparison summary and unresolved mismatches.
+- Any remaining limitations and next refinements.

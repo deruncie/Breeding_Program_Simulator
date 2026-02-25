@@ -1,0 +1,25 @@
+digraph Scheme {
+  label="AdvanceYear_GSTP_readable.R";
+  labelloc="t";
+  rankdir="LR";
+  node [shape=box, style="rounded"];
+  "AYT";
+  "DH_PIPE";
+  "EYT";
+  "MODEL:gp_main";
+  "PYT";
+  "RC";
+  "Variety";
+  "PYT" -> "RC" [label="run_start_rc_if_ready | stage_transition | selection=random", color="black", style="solid"];
+  "RC" -> "DH_PIPE" [label="run_send_rc_to_dh | stage_transition | dh,select; selection=ebv", color="black", style="solid"];
+  "MODEL:gp_main" -> "DH_PIPE" [label="run_send_rc_to_dh | model_dependency | model_used; selection=ebv", color="royalblue4", style="dotted"];
+  "DH_PIPE" -> "PYT" [label="run_pyt | phenotype_trial | phenotype; selection=random; n=cfg$n_pyt; loc=1; reps=1", color="forestgreen", style="solid"];
+  "PYT" -> "PYT" [label="run_genotype_pyt | genotyping | genotype; chip=cfg$snp_chip", color="gray40", style="dashed"];
+  "MODEL:gp_main" -> "AYT" [label="run_ayt | model_dependency | model_used; selection=ebv", color="royalblue4", style="dotted"];
+  "PYT" -> "AYT" [label="run_ayt | phenotype_trial | phenotype,select; selection=ebv; n=cfg$n_ayt; loc=4; reps=2", color="forestgreen", style="solid"];
+  "AYT" -> "EYT" [label="run_eyt | phenotype_trial | phenotype,select; selection=pheno; n=cfg$n_eyt; loc=20; reps=4", color="forestgreen", style="solid"];
+  "EYT" -> "Variety" [label="run_release_variety | stage_transition | select; selection=pheno", color="black", style="solid"];
+  "RC" -> "RC" [label="run_recurrent_gs_tick | stage_transition | cross,select; selection=ebv", color="black", style="solid"];
+  "MODEL:gp_main" -> "RC" [label="run_recurrent_gs_tick | model_dependency | model_used; selection=ebv", color="royalblue4", style="dotted"];
+  "PYT" -> "MODEL:gp_main" [label="run_midyear_gp_update | gp_train | gp_train", color="gray40", style="dashed"];
+}

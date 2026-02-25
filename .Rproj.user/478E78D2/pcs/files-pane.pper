@@ -1,9 +1,13 @@
 {
     "sortOrder": [
         {
+            "columnIndex": 4,
+            "ascending": false
+        },
+        {
             "columnIndex": 2,
             "ascending": true
         }
     ],
-    "path": "~/Box Sync/DER_projects/Optimized_GP/Breeding_Program_Simulator"
+    "path": "~/Box Sync/DER_projects/Optimized_GP/Breeding_Program_Simulator/examples"
 }
