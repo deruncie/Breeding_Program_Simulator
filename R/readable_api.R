@@ -1,6 +1,16 @@
 # Readable functional API: list-based state + explicit stage verbs.
 
-# Build an empty simulation state with continuous-time ticks.
+#' Initialize Program State
+#'
+#' Create an empty state container for readable breeding-program simulations.
+#'
+#' @param SP AlphaSimR `SimParam` object.
+#' @param dt Tick length in years.
+#' @param start_time Starting time in years.
+#' @param sim Optional list merged into `state$sim`.
+#'
+#' @return A `bp_state` list.
+#' @export
 bp_init_state <- function(SP, dt = 0.25, start_time = 0, sim = list()) {
   tick <- as.integer(round(start_time / dt))
   state <- list(
@@ -19,7 +29,23 @@ bp_init_state <- function(SP, dt = 0.25, start_time = 0, sim = list()) {
   state
 }
 
-# Optional interactive debug breakpoint with config-driven gates.
+#' Conditional Debug Breakpoint
+#'
+#' Enter `browser()` when debug flags in `cfg` match the current state.
+#'
+#' @param state Program state.
+#' @param cfg Configuration list with debug flags.
+#' @param where Optional label for function/stage.
+#' @param year Optional current year.
+#' @param tick Optional current tick.
+#'
+#' @details
+#' When a breakpoint is triggered, this helper prints a compact summary of
+#' caller-local variables and then evaluates `browser()` in the caller frame so
+#' debugging starts in the caller context (e.g. `run_recurrent_gs_tick`).
+#'
+#' @return Invisibly returns `NULL` or enters browser mode.
+#' @export
 bp_debug_break <- function(state, cfg, where = NULL, year = NULL, tick = NULL) {
   if (!isTRUE(cfg$debug %||% FALSE)) return(invisible(NULL))
 
@@ -41,7 +67,36 @@ bp_debug_break <- function(state, cfg, where = NULL, year = NULL, tick = NULL) {
     return(invisible(NULL))
   }
 
-  browser()
+  # Compact caller-local variable summary for fast interactive inspection.
+  caller <- parent.frame()
+  obj_names <- ls(envir = caller, all.names = FALSE)
+  if (length(obj_names) > 0L) {
+    n_show <- as.integer(cfg$debug_n_vars %||% 12L)
+    n_show <- max(1L, n_show)
+    show_names <- head(sort(obj_names), n_show)
+    parts <- vapply(show_names, function(nm) {
+      x <- get(nm, envir = caller)
+      cls <- class(x)[1]
+      len <- tryCatch(length(x), error = function(e) NA_integer_)
+      if (!is.na(len)) sprintf("%s<%s:%d>", nm, cls, len) else sprintf("%s<%s>", nm, cls)
+    }, character(1))
+    cat(sprintf(
+      "debug: where=%s tick=%d year=%s vars=%s\n",
+      where,
+      as.integer(tick),
+      ifelse(is.null(year), "NA", as.character(year)),
+      paste(parts, collapse = ", ")
+    ))
+  } else {
+    cat(sprintf(
+      "debug: where=%s tick=%d year=%s vars=<none>\n",
+      where,
+      as.integer(tick),
+      ifelse(is.null(year), "NA", as.character(year))
+    ))
+  }
+
+  evalq(browser(), envir = caller)
 }
 
 # Cohort metadata table.
@@ -271,7 +326,19 @@ bp_close_cohort <- function(state, cohort_id) {
   state
 }
 
-# Query cohorts that are currently available for use.
+#' Get Ready Cohorts
+#'
+#' Return cohorts available for use at `as_of_tick`, optionally filtered by
+#' stage/stream and activity status.
+#'
+#' @param state Program state.
+#' @param stage Optional stage filter.
+#' @param stream Optional stream filter.
+#' @param active_only Whether to return only active cohorts.
+#' @param as_of_tick Tick used for availability filtering.
+#'
+#' @return Cohort metadata `data.frame`.
+#' @export
 bp_get_ready_cohorts <- function(state, stage = NULL, stream = NULL, active_only = TRUE, as_of_tick = state$time$tick) {
   df <- state$cohorts
   if (!is.null(stage)) {
@@ -356,7 +423,24 @@ bp_handle_no_ready <- function(cfg, fn_name, stage_label, context = "no availabl
   }
 }
 
-# Get one ready source-pop bundle for a stage, with optional combination.
+#' Get Ready Pop Bundle
+#'
+#' Select source cohort(s), retrieve pop(s), and optionally merge them.
+#'
+#' @param state Program state.
+#' @param stage Input stage(s).
+#' @param stream Optional stream filter.
+#' @param policy Source selection policy.
+#' @param combine Whether to merge selected pops into one.
+#' @param input_n Number of cohorts for `policy = "latest_n"`.
+#' @param cycle_id Optional cycle id.
+#' @param input_cycle_ids Optional cycle id vector.
+#' @param select_source_cohorts_fn Custom source selector for `policy = "custom"`.
+#' @param silent Suppress no-ready messages.
+#' @param fail_if_no_ready Error when no cohorts are eligible.
+#'
+#' @return `NULL` or a source bundle list with `pop`, `source_ids`, and metadata.
+#' @export
 get_ready_pop <- function(
   state,
   stage,
@@ -406,7 +490,22 @@ get_ready_pop <- function(
   )
 }
 
-# Add a stage output pop using source metadata defaults.
+#' Add Output Stage Cohort
+#'
+#' Create a new cohort from an output pop, carrying defaults from source metadata.
+#'
+#' @param state Program state.
+#' @param pop Output pop.
+#' @param stage Output stage.
+#' @param source Optional source bundle from [get_ready_pop()].
+#' @param ready_in_years Delay until cohort availability.
+#' @param stream Optional output stream override.
+#' @param cycle_id Optional output cycle id override.
+#' @param active Whether the new cohort is active.
+#' @param inherit_genotypes Whether to inherit genotype availability from source.
+#'
+#' @return Updated program state.
+#' @export
 put_stage_pop <- function(
   state,
   pop,
@@ -443,7 +542,21 @@ put_stage_pop <- function(
   state
 }
 
-# Add a cost row, defaulting to the most recently created cohort.
+#' Add Stage Cost
+#'
+#' Append a cost event row to `state$cost_log`.
+#'
+#' @param state Program state.
+#' @param event Event label.
+#' @param n_units Number of units.
+#' @param unit_cost Cost per unit.
+#' @param stage Optional stage label.
+#' @param unit Unit label.
+#' @param cohort_id Optional cohort id.
+#' @param n Alias for `n_units`.
+#'
+#' @return Updated program state.
+#' @export
 add_stage_cost <- function(
   state,
   event,
@@ -477,7 +590,22 @@ add_stage_cost <- function(
   )
 }
 
-# Log aggregate trial phenotypes from a just-produced trial pop.
+#' Log Trial Phenotypes
+#'
+#' Log trial phenotypes from `pop_trial@pheno` into `state$phenotype_log`.
+#'
+#' @param state Program state.
+#' @param pop_trial Pop with phenotype values in `@pheno`.
+#' @param stage Stage label.
+#' @param source Optional source bundle.
+#' @param traits Trait index/indices.
+#' @param n_loc Number of locations represented.
+#' @param reps Number of replicates represented.
+#' @param environment Environment code (`0` for aggregate).
+#' @param p_value Optional environment offset.
+#'
+#' @return Updated program state.
+#' @export
 log_trial_pheno <- function(
   state,
   pop_trial,
@@ -512,7 +640,15 @@ log_trial_pheno <- function(
   )
 }
 
-# Close all source cohorts used by a source-pop bundle.
+#' Close Source Cohorts
+#'
+#' Mark all source cohorts in a source bundle as inactive.
+#'
+#' @param state Program state.
+#' @param source Source bundle from [get_ready_pop()].
+#'
+#' @return Updated program state.
+#' @export
 close_sources <- function(state, source) {
   if (is.null(source) || is.null(source$source_ids)) return(state)
   for (cid in as.character(source$source_ids)) {
@@ -521,7 +657,15 @@ close_sources <- function(state, source) {
   state
 }
 
-# Advance simulation clock by ticks.
+#' Advance Time
+#'
+#' Advance simulation time by integer ticks.
+#'
+#' @param state Program state.
+#' @param n_ticks Number of ticks to advance.
+#'
+#' @return Updated program state.
+#' @export
 bp_advance_time <- function(state, n_ticks = 1L) {
   state$time$tick <- as.integer(state$time$tick + as.integer(n_ticks))
   state$time$t <- as.numeric(state$time$tick * state$time$dt)
@@ -633,7 +777,77 @@ merge_pops <- function(pop_list) {
   stop("merge_pops requires homogeneous pop types (all Pop, all data.frame, or all matrix)", call. = FALSE)
 }
 
-# Run a generic phenotyping trial from input cohorts to output trial cohorts.
+#' Run Phenotyping Trial
+#'
+#' Generic field-trial runner with source selection, phenotype generation,
+#' phenotype logging, output cohort creation, and cost logging.
+#'
+#' @param state Program state.
+#' @param cfg Trial configuration list.
+#'
+#' @section Required `cfg` fields:
+#' \describe{
+#'   \item{`input_stage`}{Source cohort stage to phenotype.}
+#'   \item{`output_stage`}{Stage name for created trial cohort(s).}
+#'   \item{`varE`}{Residual variance passed to `AlphaSimR::setPheno`.}
+#' }
+#'
+#' @section Common optional `cfg` fields:
+#' \describe{
+#'   \item{`traits`}{Trait index/vector. Default `1L`.}
+#'   \item{`n_loc`}{Number of locations. Default `1L`.}
+#'   \item{`reps`}{Replications per location. Default `1L`.}
+#'   \item{`duration_years`}{Delay until output cohort is available.}
+#'   \item{`cost_per_plot`}{Cost per plot for logging.}
+#'   \item{`select_entries_fn`}{Function `(state, src, pop_in, cfg) -> idx` for entry selection.}
+#'   \item{`input_policy`}{Source policy (`latest_one`, `latest_n`, `all_ready`, ...).}
+#'   \item{`consume_input`}{Close source cohorts after creating output.}
+#'   \item{`inherit_genotypes`}{Propagate genotype availability to copied subset cohorts.}
+#' }
+#'
+#' @section Environment-control options:
+#' To model explicit environment means, set one of `use_env_control = TRUE`,
+#' `env_means`, `env_mean_mu`, `env_mean_sd`, or `env_year_sd`.
+#' Then each environment phenotype is generated with `onlyPheno = TRUE` and
+#' aggregated into `pop_trial@pheno`.
+#'
+#' @section Logging behavior:
+#' \describe{
+#'   \item{`log_per_environment`}{Log each environment separately (default `TRUE` when environment control is used).}
+#'   \item{`log_aggregate`}{Log aggregate line means as environment `0` (default `TRUE`).}
+#' }
+#'
+#' @return Updated program state.
+#'
+#' @examples
+#' \donttest{
+#' if (requireNamespace("AlphaSimR", quietly = TRUE)) {
+#'   library(AlphaSimR)
+#'   h <- quickHaplo(20, 2, 50)
+#'   SP <- SimParam$new(h)
+#'   SP$addTraitA(10)
+#'
+#'   state <- bp_init_state(SP = SP, dt = 0.25)
+#'   parents <- newPop(h, simParam = SP)
+#'   state <- put_stage_pop(state, parents, stage = "F5", ready_in_years = 0)
+#'
+#'   cfg <- list(
+#'     input_stage = "F5",
+#'     output_stage = "PYT",
+#'     traits = 1L,
+#'     n_loc = 4L,
+#'     reps = 2L,
+#'     varE = 1.0,
+#'     duration_years = 0.5,
+#'     cost_per_plot = 20,
+#'     env_mean_mu = 0,
+#'     env_mean_sd = 1,
+#'     env_year_sd = 0.2
+#'   )
+#'   state <- run_phenotype_trial(state, cfg)
+#' }
+#' }
+#' @export
 run_phenotype_trial <- function(state, cfg) {
   stage_label <- as.character(cfg$input_stage %||% "unknown")
   ready <- bp_get_ready_cohorts(state, stage = cfg$input_stage, stream = cfg$stream %||% NULL)
@@ -784,7 +998,15 @@ run_phenotype_trial <- function(state, cfg) {
   state
 }
 
-# Log cohort genotyping events and costs.
+#' Run Genotyping
+#'
+#' Schedule/log genotyping events by cohort and chip, with genotyping costs.
+#'
+#' @param state Program state.
+#' @param cfg Genotyping configuration list.
+#'
+#' @return Updated program state.
+#' @export
 run_genotyping <- function(state, cfg) {
   stage_label <- as.character(cfg$input_stage %||% "unknown")
   if (isTRUE(cfg$include_not_ready %||% FALSE)) {
@@ -915,8 +1137,69 @@ bp_assert_genotyped_cohorts <- function(state, cohort_ids, chip, stage_label = "
   }
 }
 
-# Predict EBV using either default AlphaSimR setEBV or a user hook.
-bp_predict_ebv <- function(pop, model_entry, state, cfg, stage_label = "unknown") {
+#' Predict EBV
+#'
+#' Predict EBVs for a target pop using either a user function or AlphaSimR.
+#'
+#' @param pop Target pop.
+#' @param model_entry Model entry from `state$gs_models`.
+#' @param state Program state.
+#' @param cfg Prediction configuration list.
+#' @param stage_label Stage label used in errors.
+#'
+#' @section Key `cfg` fields:
+#' \describe{
+#'   \item{`cohort_ids`}{Cohort id(s) used for genotype-chip validation. Required when `require_genotyped = TRUE`.}
+#'   \item{`chip`}{Optional chip override for validation/prediction compatibility.}
+#'   \item{`require_genotyped`}{Whether to enforce genotype availability checks. Default `TRUE`.}
+#'   \item{`predict_ebv_fn`}{Optional custom predictor function. Signature:
+#'   `(target_pop, model_obj, state, cfg, model_entry)`. Must return numeric
+#'   vector (`nInd`) or numeric matrix (`nInd x nTraits`).}
+#' }
+#'
+#' @details
+#' If `predict_ebv_fn` is not provided, this function calls
+#' `AlphaSimR::setEBV(pop, solution = model_entry$model, simParam = state$sim$SP)`.
+#' For custom predictors, returned values are written directly into `pop@ebv`
+#' (single- or multi-trait).
+#'
+#' @return Pop with updated `@ebv`.
+#'
+#' @examples
+#' \donttest{
+#' if (requireNamespace("AlphaSimR", quietly = TRUE)) {
+#'   library(AlphaSimR)
+#'   h <- quickHaplo(16, 2, 40)
+#'   SP <- SimParam$new(h)
+#'   SP$addTraitA(10)
+#'   pop <- newPop(h, simParam = SP)
+#'
+#'   state <- bp_init_state(SP = SP, dt = 1)
+#'   state <- put_stage_pop(state, pop, stage = "TEST", ready_in_years = 0)
+#'   cid <- tail(state$cohorts$cohort_id, 1)
+#'
+#'   # Record that this cohort is genotyped on chip 1.
+#'   state <- run_genotyping(state, list(input_stage = "TEST", chip = 1L, duration_years = 0))
+#'
+#'   model_entry <- list(
+#'     model = list(dummy = TRUE),
+#'     chip = "1",
+#'     predict_ebv_fn = function(target_pop, model_obj, state, cfg, model_entry) {
+#'       seq_len(target_pop@nInd)
+#'     }
+#'   )
+#'   pop2 <- run_predict_ebv(
+#'     pop = pop,
+#'     model_entry = model_entry,
+#'     state = state,
+#'     cfg = list(cohort_ids = cid),
+#'     stage_label = "TEST"
+#'   )
+#'   dim(pop2@ebv)
+#' }
+#' }
+#' @export
+run_predict_ebv <- function(pop, model_entry, state, cfg, stage_label = "unknown") {
   require_genotyped <- isTRUE(cfg$require_genotyped %||% TRUE)
   if (require_genotyped) {
     chip_for_pred <- cfg$chip %||% model_entry$chip %||% state$sim$default_chip
@@ -969,7 +1252,65 @@ bp_predict_ebv <- function(pop, model_entry, state, cfg, stage_label = "unknown"
   AlphaSimR::setEBV(pop, solution = model_entry$model, simParam = state$sim$SP)
 }
 
-# Train and store a genomic prediction model from training cohorts.
+#' Train GP Model
+#'
+#' Train and store a genomic prediction model from eligible cohorts.
+#'
+#' @param state Program state.
+#' @param cfg Training configuration list.
+#'
+#' @section Required `cfg` fields:
+#' \describe{
+#'   \item{`from_stage`}{Stage used as training source cohorts.}
+#' }
+#'
+#' @section Common optional `cfg` fields:
+#' \describe{
+#'   \item{`chip`}{Genotyping chip key/index. Default `state$sim$default_chip`.}
+#'   \item{`trait`}{Trait index for default RRBLUP model.}
+#'   \item{`lookback_years`}{Training cohort lookback window.}
+#'   \item{`training_policy`}{Subset policy over eligible training cohorts.}
+#'   \item{`model_id`}{Stored model id. Auto-generated if omitted.}
+#'   \item{`train_model_fn`}{Custom trainer `(train_pop, state, cfg) -> model_object`.}
+#'   \item{`predict_ebv_fn`}{Optional custom predictor stored alongside model.}
+#' }
+#'
+#' @details
+#' By default, this function trains `AlphaSimR::RRBLUP(...)` on merged training
+#' cohorts filtered to the requested chip. The stored model entry includes model
+#' object, trained tick, chip key, trait index, and source cohorts.
+#'
+#' @return Updated program state.
+#'
+#' @examples
+#' \donttest{
+#' if (requireNamespace("AlphaSimR", quietly = TRUE)) {
+#'   library(AlphaSimR)
+#'   h <- quickHaplo(20, 2, 50)
+#'   SP <- SimParam$new(h)
+#'   SP$addTraitA(10)
+#'
+#'   state <- bp_init_state(SP = SP, dt = 1)
+#'   pop <- newPop(h, simParam = SP)
+#'   pop <- setPheno(pop, varE = 1, reps = 1, traits = 1, simParam = SP)
+#'   state <- put_stage_pop(state, pop, stage = "PYT", ready_in_years = 0)
+#'
+#'   state <- run_genotyping(state, list(input_stage = "PYT", chip = 1L, duration_years = 0))
+#'
+#'   state <- run_train_gp_model(
+#'     state,
+#'     list(
+#'       from_stage = "PYT",
+#'       chip = 1L,
+#'       trait = 1L,
+#'       lookback_years = 3,
+#'       model_id = "rrblup_pyt"
+#'     )
+#'   )
+#'   names(state$gs_models)
+#' }
+#' }
+#' @export
 run_train_gp_model <- function(state, cfg) {
   train_cohorts <- bp_get_training_cohorts(state, cfg)
   if (nrow(train_cohorts) == 0L) {
@@ -1015,7 +1356,14 @@ run_train_gp_model <- function(state, cfg) {
   state
 }
 
-# Return the most recently trained model id.
+#' Get Latest Model ID
+#'
+#' Return the id of the most recently trained model in `state$gs_models`.
+#'
+#' @param state Program state.
+#'
+#' @return Character scalar model id, or `NULL`.
+#' @export
 bp_latest_model_id <- function(state) {
   if (length(state$gs_models) == 0L) return(NULL)
   ord <- order(vapply(state$gs_models, function(x) x$trained_tick, numeric(1)), decreasing = TRUE)

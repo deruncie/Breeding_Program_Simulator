@@ -116,7 +116,7 @@ test_that("run_train_gp_model wraps train_model_fn errors with context", {
   )
 })
 
-test_that("bp_predict_ebv accepts multi-trait matrix output", {
+test_that("run_predict_ebv accepts multi-trait matrix output", {
   testthat::skip_if_not_installed("AlphaSimR")
   library(AlphaSimR)
 
@@ -155,13 +155,13 @@ test_that("bp_predict_ebv accepts multi-trait matrix output", {
     }
   )
 
-  pop2 <- BreedingProgramSimulator:::bp_predict_ebv(pop, model_entry, state, cfg, stage_label = "TEST")
+  pop2 <- BreedingProgramSimulator:::run_predict_ebv(pop, model_entry, state, cfg, stage_label = "TEST")
   expect_equal(dim(pop2@ebv), c(pop2@nInd, 2L))
   s <- selectInd(pop2, nInd = 3, use = "ebv", trait = 2, simParam = SP)
   expect_equal(s@nInd, 3L)
 })
 
-test_that("bp_predict_ebv requires logged genotyping by default", {
+test_that("run_predict_ebv requires logged genotyping by default", {
   testthat::skip_if_not_installed("AlphaSimR")
   library(AlphaSimR)
 
@@ -189,7 +189,7 @@ test_that("bp_predict_ebv requires logged genotyping by default", {
   )
 
   expect_error(
-    BreedingProgramSimulator:::bp_predict_ebv(pop, model_entry, state, cfg, stage_label = "TEST"),
+    BreedingProgramSimulator:::run_predict_ebv(pop, model_entry, state, cfg, stage_label = "TEST"),
     "requires genotyping"
   )
 })

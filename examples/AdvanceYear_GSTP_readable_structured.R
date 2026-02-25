@@ -41,7 +41,7 @@ run_recurrent_gs_tick <- function(state, cfg) {
   model <- state$gs_models[[cfg$model_id]]
   if (is.null(model)) return(state)
 
-  pop <- bp_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$source_ids), stage_label = "RC")
+  pop <- run_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$source_ids), stage_label = "RC")
   sel <- selectInd(pop, nInd = min(cfg$rc_select_n, pop_n_ind(pop)), use = "ebv", trait = 1, simParam = state$sim$SP)
 
   plan <- make_cross_plan_no_self(pop_n_ind(sel), cfg$rc_crosses)
@@ -108,7 +108,7 @@ run_send_rc_to_dh <- function(state, cfg) {
   pop <- src$pop
   model <- state$gs_models[[cfg$model_id]]
   if (!is.null(model)) {
-    pop <- bp_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$source_ids), stage_label = "RC_to_DH")
+    pop <- run_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$source_ids), stage_label = "RC_to_DH")
     send <- selectInd(pop, nInd = min(cfg$dh_n_entries_per_year, pop_n_ind(pop)), use = "ebv", trait = 1, simParam = state$sim$SP)
   } else {
     idx <- sample.int(pop_n_ind(pop), size = min(cfg$dh_n_entries_per_year, pop_n_ind(pop)), replace = FALSE)
@@ -194,7 +194,7 @@ run_ayt <- function(state, cfg) {
     pop_scored <- if (is.null(model)) {
       pop_in
     } else {
-      bp_predict_ebv(pop_in, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$cohort_id), stage_label = "AYT")
+      run_predict_ebv(pop_in, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$cohort_id), stage_label = "AYT")
     }
     n <- min(cfg_local$n_ayt, pop_n_ind(pop_scored))
     selected <- if (is.null(model)) {

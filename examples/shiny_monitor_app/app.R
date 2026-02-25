@@ -27,7 +27,13 @@ tryCatch(
   source(file.path(repo_root, "examples", "AdvanceYear_GSTP_readable_structured.R"), local = ex_env),
   finally = setwd(old_wd)
 )
-run_gstp_loop_demo <- ex_env$run_gstp_loop_demo
+run_gstp_loop_demo <- ex_env$run_gstp_loop_demo_structured
+if (!is.function(run_gstp_loop_demo)) {
+  run_gstp_loop_demo <- ex_env$run_gstp_loop_demo
+}
+if (!is.function(run_gstp_loop_demo)) {
+  stop("Could not find GSTP demo runner in example script", call. = FALSE)
+}
 
 metric_choices <- c("mean_gv", "var_gv", "max_gv", "cor_ebv_gv", "h2", "H2")
 

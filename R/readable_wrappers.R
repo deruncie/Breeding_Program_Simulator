@@ -1,7 +1,15 @@
 # Example wrappers for common scheme-specific operations.
 # These are intended as editable templates.
 
-# Generic crossing stage with optional custom parent selection and cross-plan hooks.
+#' Run Generic Crossing Stage
+#'
+#' Generic crossing stage with optional parent selection and custom cross plan.
+#'
+#' @param state Program state.
+#' @param cfg Crossing configuration list.
+#'
+#' @return Updated program state.
+#' @export
 run_crossing_stage <- function(state, cfg) {
   ready <- bp_get_ready_cohorts(state, stage = cfg$input_stage, stream = cfg$stream %||% NULL)
   if (nrow(ready) == 0L) return(state)
@@ -63,7 +71,15 @@ run_crossing_stage <- function(state, cfg) {
   state
 }
 
-# Generic selfing stage with configurable generation depth and progeny schedule.
+#' Run Generic Selfing Stage
+#'
+#' Generic selfing/SSD-style stage with configurable generation depth.
+#'
+#' @param state Program state.
+#' @param cfg Selfing configuration list.
+#'
+#' @return Updated program state.
+#' @export
 run_selfing_stage <- function(state, cfg) {
   ready <- bp_get_ready_cohorts(state, stage = cfg$input_stage, stream = cfg$stream %||% NULL)
   if (nrow(ready) == 0L) return(state)
@@ -117,7 +133,26 @@ run_selfing_stage <- function(state, cfg) {
   state
 }
 
-# Example streamlined crossing stage.
+#' Run Simple F1 Crossing Stage
+#'
+#' Readable wrapper for parent-to-F1 crossing using the helper verbs.
+#'
+#' @param state Program state.
+#' @param input_stage Parent stage.
+#' @param output_stage Output stage name.
+#' @param n_crosses Number of crosses.
+#' @param n_progeny_per_cross Progeny per cross.
+#' @param ready_in_years Delay to availability.
+#' @param cost_per_cross Crossing unit cost.
+#' @param consume_input Whether to close input source cohorts.
+#' @param stream Optional stream filter/assignment.
+#' @param policy Source selection policy.
+#' @param cross_plan_fn Optional custom cross plan function.
+#' @param silent Suppress no-ready messages.
+#' @param fail_if_no_ready Error if no source cohort is ready.
+#'
+#' @return Updated program state.
+#' @export
 run_make_f1 <- function(
   state,
   input_stage = "PARENT",
@@ -183,7 +218,15 @@ run_make_f1 <- function(
   state
 }
 
-# Example selfing stage: SSD-like advancement to F5 with fixed selfing depth.
+#' Run Example SSD-to-F5 Stage
+#'
+#' Convenience wrapper around [run_selfing_stage()] with SSD-like defaults.
+#'
+#' @param state Program state.
+#' @param cfg Selfing configuration overrides.
+#'
+#' @return Updated program state.
+#' @export
 run_ssd_to_f5 <- function(state, cfg) {
   cfg2 <- utils::modifyList(
     list(
@@ -200,7 +243,16 @@ run_ssd_to_f5 <- function(state, cfg) {
   run_selfing_stage(state, cfg2)
 }
 
-# Example decision stage: pick variety by PYT phenotype and recycle best EBV lines as parents.
+#' Select Variety and Recycle Parents
+#'
+#' Example decision stage that releases variety lines and updates parent pool
+#' using EBV-based selection.
+#'
+#' @param state Program state.
+#' @param cfg Selection/recycling configuration list.
+#'
+#' @return Updated program state.
+#' @export
 run_select_variety_and_recycle <- function(state, cfg) {
   stage_label <- as.character(cfg$input_stage %||% "unknown")
   ready <- bp_get_ready_cohorts(state, stage = cfg$input_stage, stream = cfg$stream %||% NULL)
@@ -237,7 +289,7 @@ run_select_variety_and_recycle <- function(state, cfg) {
     )
 
     cfg_pred <- utils::modifyList(as.list(cfg), list(cohort_ids = src$cohort_id))
-    pop_ebv <- bp_predict_ebv(pop = pop, model_entry = model_entry, state = state, cfg = cfg_pred, stage_label = stage_label)
+    pop_ebv <- run_predict_ebv(pop = pop, model_entry = model_entry, state = state, cfg = cfg_pred, stage_label = stage_label)
     n_par <- as.integer(cfg$n_new_parents %||% 50L)
     n_par <- min(n_par, pop_n_ind(pop_ebv))
     ebv_trait <- as.integer(cfg$ebv_trait %||% 1L)
@@ -285,8 +337,14 @@ run_select_variety_and_recycle <- function(state, cfg) {
   state
 }
 
-# Example streamlined multi-environment trial stage.
-# Designed as a direct template: edit constants in this function body.
+#' Run Example Multi-Environment Trial
+#'
+#' Readable template function for a multi-environment phenotyping stage.
+#'
+#' @param state Program state.
+#'
+#' @return Updated program state.
+#' @export
 run_multienv_trial <- function(state) {
   input_stage <- "F5"
   output_stage <- "PYT"
@@ -423,7 +481,24 @@ run_multienv_trial <- function(state) {
   state
 }
 
-# Example streamlined single-environment PYT stage.
+#' Run Example PYT Stage
+#'
+#' Readable single-environment PYT wrapper using helper verbs.
+#'
+#' @param state Program state.
+#' @param input_stage Input stage.
+#' @param output_stage Output stage.
+#' @param traits Trait index or vector.
+#' @param reps Number of reps.
+#' @param varE Residual variance passed to `AlphaSimR::setPheno`.
+#' @param ready_in_years Delay to cohort availability.
+#' @param cost_per_plot Plot-level cost.
+#' @param consume_input Whether to close source cohorts.
+#' @param silent Suppress no-ready messages.
+#' @param fail_if_no_ready Error if no source is ready.
+#'
+#' @return Updated program state.
+#' @export
 run_pyt <- function(
   state,
   input_stage = "F5",

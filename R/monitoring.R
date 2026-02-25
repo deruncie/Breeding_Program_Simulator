@@ -60,7 +60,16 @@ bp_trace_origin_cohort <- function(state, cohort_id, origin_stage = NULL) {
   NA_character_
 }
 
-# Add created/available/origin year columns for each cohort.
+#' Monitor Cohorts Over Time
+#'
+#' Adds created/available/origin year metadata to cohort table rows.
+#'
+#' @param state Program state.
+#' @param ticks_per_year Ticks per year conversion.
+#' @param origin_stage Optional stage(s) used to anchor origin tracing.
+#'
+#' @return Cohort metadata `data.frame` with added year/origin columns.
+#' @export
 bp_monitor_cohorts <- function(state, ticks_per_year = as.integer(round(1 / state$time$dt)), origin_stage = NULL) {
   if (nrow(state$cohorts) == 0L) return(state$cohorts)
   tpy <- as.integer(ticks_per_year)
@@ -136,7 +145,20 @@ bp_estimate_h2 <- function(state, cohort_id, trait_label, trait_index) {
   c(h2 = h2_line, H2 = H2_line)
 }
 
-# Per-cohort metrics for a selected trait.
+#' Extract Cohort Metrics
+#'
+#' Computes per-cohort summary metrics (e.g. mean/variance/max genetic value,
+#' EBV-GV correlation, and line-mean h2/H2).
+#'
+#' @param state Program state.
+#' @param stages Optional stage filter.
+#' @param trait Trait index or label.
+#' @param origin_stage Optional origin-stage filter.
+#' @param include_inactive Whether to include inactive cohorts.
+#' @param ticks_per_year Ticks per year conversion.
+#'
+#' @return `data.frame` with cohort metadata and metrics.
+#' @export
 bp_extract_cohort_metrics <- function(
   state,
   stages = NULL,
@@ -199,7 +221,19 @@ bp_extract_cohort_metrics <- function(
   do.call(rbind, rows)
 }
 
-# Summarize one metric by year and stage.
+#' Summarize Metric by Year
+#'
+#' Aggregates one metric column by year and stage.
+#'
+#' @param metrics_df Metrics data frame from [bp_extract_cohort_metrics()].
+#' @param metric Metric column name.
+#' @param year_col Year column (`"available_year"` or `"origin_year"`).
+#' @param stage_col Stage column name.
+#' @param fun Summary function (default `mean`).
+#' @param na.rm Remove missing values before aggregation.
+#'
+#' @return Aggregated `data.frame` with `year`, `stage`, and `value`.
+#' @export
 bp_summarize_metric_by_year <- function(
   metrics_df,
   metric = "mean_gv",
@@ -221,7 +255,18 @@ bp_summarize_metric_by_year <- function(
   stats::aggregate(value ~ year + stage, data = df, FUN = function(x) fun(x, na.rm = na.rm))
 }
 
-# Plot one metric by year and stage with optional aggregation.
+#' Plot Metric by Year
+#'
+#' Creates a `ggplot2` line plot for a selected metric by year and stage.
+#'
+#' @param metrics_df Metrics data frame from [bp_extract_cohort_metrics()].
+#' @param metric Metric column name.
+#' @param year_col Year column (`"available_year"` or `"origin_year"`).
+#' @param stage_col Stage column name.
+#' @param aggregate Whether to aggregate cohorts within stage-year.
+#'
+#' @return A `ggplot` object.
+#' @export
 bp_plot_metric_by_year <- function(
   metrics_df,
   metric = "mean_gv",
