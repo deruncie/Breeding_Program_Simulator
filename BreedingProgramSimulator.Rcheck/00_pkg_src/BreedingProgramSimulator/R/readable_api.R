@@ -19,6 +19,31 @@ bp_init_state <- function(SP, dt = 0.25, start_time = 0, sim = list()) {
   state
 }
 
+# Optional interactive debug breakpoint with config-driven gates.
+bp_debug_break <- function(state, cfg, where = NULL, year = NULL, tick = NULL) {
+  if (!isTRUE(cfg$debug %||% FALSE)) return(invisible(NULL))
+
+  if (is.null(tick)) tick <- as.integer(state$time$tick)
+  if (is.null(year) && !is.null(cfg$ticks_per_year)) {
+    year <- as.integer(floor(tick / as.integer(cfg$ticks_per_year)) + 1L)
+  }
+  if (is.null(where)) {
+    where <- as.character(sys.call(-1)[[1]])
+  }
+
+  if (!is.null(cfg$debug_after_year) && !is.null(year) && year < as.integer(cfg$debug_after_year)) {
+    return(invisible(NULL))
+  }
+  if (!is.null(cfg$debug_after_tick) && tick < as.integer(cfg$debug_after_tick)) {
+    return(invisible(NULL))
+  }
+  if (!is.null(cfg$debug_where) && !(where %in% as.character(cfg$debug_where))) {
+    return(invisible(NULL))
+  }
+
+  browser()
+}
+
 # Cohort metadata table.
 bp_empty_cohorts <- function() {
   data.frame(
@@ -814,8 +839,49 @@ bp_call_user_fn <- function(fn, args, fn_label, stage_label) {
   )
 }
 
+# Ensure one or more cohorts have available genotype records for the requested chip.
+bp_assert_genotyped_cohorts <- function(state, cohort_ids, chip, stage_label = "unknown", context = "prediction") {
+  ids <- unique(as.character(cohort_ids))
+  ids <- ids[!is.na(ids) & nzchar(ids)]
+  if (length(ids) == 0L) {
+    stop(sprintf("%s for stage '%s' requires cohort_ids for genotype validation", context, stage_label), call. = FALSE)
+  }
+
+  ckey <- chip_key(chip)
+  bad <- vapply(ids, function(cid) {
+    !any(
+      state$genotype_log$cohort_id == cid &
+        state$genotype_log$chip == ckey &
+        state$genotype_log$available_tick <= state$time$tick
+    )
+  }, logical(1))
+
+  if (any(bad)) {
+    miss <- paste(ids[bad], collapse = ", ")
+    stop(
+      sprintf(
+        "%s for stage '%s' requires genotyping for chip '%s'; missing cohorts: %s",
+        context, stage_label, ckey, miss
+      ),
+      call. = FALSE
+    )
+  }
+}
+
 # Predict EBV using either default AlphaSimR setEBV or a user hook.
 bp_predict_ebv <- function(pop, model_entry, state, cfg, stage_label = "unknown") {
+  require_genotyped <- isTRUE(cfg$require_genotyped %||% TRUE)
+  if (require_genotyped) {
+    chip_for_pred <- cfg$chip %||% model_entry$chip %||% state$sim$default_chip
+    bp_assert_genotyped_cohorts(
+      state = state,
+      cohort_ids = cfg$cohort_ids %||% NULL,
+      chip = chip_for_pred,
+      stage_label = stage_label,
+      context = "EBV prediction"
+    )
+  }
+
   predict_fn <- cfg$predict_ebv_fn %||% model_entry$predict_ebv_fn %||% NULL
 
   if (is.function(predict_fn)) {

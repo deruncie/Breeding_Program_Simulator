@@ -28,7 +28,7 @@ List-based, event-driven breeding simulation built around AlphaSimR POP objects.
 ## Examples
 
 - `./examples/simple_readable_cycle.R`
-- `./examples/AdvanceYear_GSTP_readable.R`
+- `./examples/AdvanceYear_GSTP_readable_structured.R`
 - `./examples/shiny_monitor_app/app.R`
 
 Run the Shiny dashboard from repo root with:

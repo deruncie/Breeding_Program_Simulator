@@ -1,0 +1,13 @@
+"from","to","edge_type","selection"
+"AYT","EYT","cohort","pheno"
+"DH_PIPE","PYT","cohort","random"
+"EYT","Variety","cohort","pheno"
+"PYT","AYT","cohort","ebv"
+"PYT","RC","cohort","random"
+"RC","DH_PIPE","cohort","ebv"
+"RC","RC","cohort","ebv"
+"GENO:PYT","PYT","genotype_info",NA
+"MODEL:gp_main","AYT","model_dependency",NA
+"MODEL:gp_main","DH_PIPE","model_dependency",NA
+"MODEL:gp_main","RC","model_dependency",NA
+"PYT","MODEL:gp_main","model_training",NA

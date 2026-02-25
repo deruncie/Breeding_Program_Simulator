@@ -127,8 +127,29 @@ test_that("bp_predict_ebv accepts multi-trait matrix output", {
   pop <- newPop(h, simParam = SP)
 
   state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0, sim = list(default_chip = 1L))
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = pop,
+    stage = "TEST",
+    duration_years = 0
+  )
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  pop <- state$pops[[cid]]
+  state$genotype_log <- rbind(
+    state$genotype_log,
+    data.frame(
+      cohort_id = cid,
+      chip = "1",
+      started_tick = 0L,
+      done_tick = 0L,
+      available_tick = 0L,
+      n_ind = pop@nInd,
+      stringsAsFactors = FALSE
+    )
+  )
   model_entry <- list(model = list(dummy = TRUE))
   cfg <- list(
+    cohort_ids = cid,
     predict_ebv_fn = function(target_pop, model_obj, state, cfg, model_entry) {
       cbind(seq_len(target_pop@nInd), rev(seq_len(target_pop@nInd)))
     }
@@ -138,6 +159,39 @@ test_that("bp_predict_ebv accepts multi-trait matrix output", {
   expect_equal(dim(pop2@ebv), c(pop2@nInd, 2L))
   s <- selectInd(pop2, nInd = 3, use = "ebv", trait = 2, simParam = SP)
   expect_equal(s@nInd, 3L)
+})
+
+test_that("bp_predict_ebv requires logged genotyping by default", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  h <- quickHaplo(12, 2, 40)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+  pop <- newPop(h, simParam = SP)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0, sim = list(default_chip = 1L))
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = pop,
+    stage = "TEST",
+    duration_years = 0
+  )
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  pop <- state$pops[[cid]]
+
+  model_entry <- list(model = list(dummy = TRUE), chip = "1")
+  cfg <- list(
+    cohort_ids = cid,
+    predict_ebv_fn = function(target_pop, model_obj, state, cfg, model_entry) {
+      seq_len(target_pop@nInd)
+    }
+  )
+
+  expect_error(
+    BreedingProgramSimulator:::bp_predict_ebv(pop, model_entry, state, cfg, stage_label = "TEST"),
+    "requires genotyping"
+  )
 })
 
 test_that("cohort availability and genotyped flags are gated by tick", {
@@ -292,4 +346,99 @@ test_that("run_phenotype_trial respects log_per_environment and log_aggregate", 
     nrow(state2$phenotype_log),
     BreedingProgramSimulator:::pop_n_ind(state2$pops[[state2$cohorts$cohort_id[2]]])
   )
+})
+
+test_that("subset copies can inherit genotype log and skip re-genotyping costs", {
+  state <- BreedingProgramSimulator:::bp_init_state(
+    SP = NULL,
+    dt = 1,
+    start_time = 0,
+    sim = list(default_chip = 1L)
+  )
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = data.frame(v = 1:10),
+    stage = "SRC",
+    duration_years = 0
+  )
+  src <- BreedingProgramSimulator:::get_ready_pop(
+    state,
+    stage = "SRC",
+    combine = TRUE,
+    policy = "latest_one",
+    silent = TRUE
+  )
+  src_id <- src$source_ids[[1]]
+
+  state <- BreedingProgramSimulator:::run_genotyping(
+    state,
+    list(input_stage = "SRC", chip = 1L, duration_years = 0, cost_per_sample = 2)
+  )
+  n_cost_before <- nrow(state$cost_log)
+
+  pop_sub <- BreedingProgramSimulator:::pop_subset(src$pop, 1:4)
+  state <- BreedingProgramSimulator:::put_stage_pop(
+    state = state,
+    pop = pop_sub,
+    stage = "SUB",
+    source = src,
+    ready_in_years = 0,
+    inherit_genotypes = TRUE
+  )
+  sub_id <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+
+  expect_true(any(state$genotype_log$cohort_id == src_id & state$genotype_log$chip == "1"))
+  expect_true(any(state$genotype_log$cohort_id == sub_id & state$genotype_log$chip == "1"))
+
+  state <- BreedingProgramSimulator:::run_genotyping(
+    state,
+    list(input_stage = "SUB", chip = 1L, duration_years = 0, cost_per_sample = 2)
+  )
+  expect_equal(nrow(state$cost_log), n_cost_before)
+})
+
+test_that("cross-derived cohorts do not inherit genotype log by default", {
+  state <- BreedingProgramSimulator:::bp_init_state(
+    SP = NULL,
+    dt = 1,
+    start_time = 0,
+    sim = list(default_chip = 1L)
+  )
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = data.frame(v = 1:8),
+    stage = "SRC",
+    duration_years = 0
+  )
+  src <- BreedingProgramSimulator:::get_ready_pop(
+    state,
+    stage = "SRC",
+    combine = TRUE,
+    policy = "latest_one",
+    silent = TRUE
+  )
+
+  state <- BreedingProgramSimulator:::run_genotyping(
+    state,
+    list(input_stage = "SRC", chip = 1L, duration_years = 0, cost_per_sample = 2)
+  )
+  n_cost_before <- nrow(state$cost_log)
+
+  pop_new <- data.frame(v = 101:106)
+  state <- BreedingProgramSimulator:::put_stage_pop(
+    state = state,
+    pop = pop_new,
+    stage = "CROSS",
+    source = src,
+    ready_in_years = 0,
+    inherit_genotypes = FALSE
+  )
+  cross_id <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  expect_false(any(state$genotype_log$cohort_id == cross_id & state$genotype_log$chip == "1"))
+
+  state <- BreedingProgramSimulator:::run_genotyping(
+    state,
+    list(input_stage = "CROSS", chip = 1L, duration_years = 0, cost_per_sample = 2)
+  )
+  expect_equal(nrow(state$cost_log), n_cost_before + 1L)
 })

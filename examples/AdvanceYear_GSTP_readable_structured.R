@@ -1,12 +1,14 @@
 # GSTP-like scheme with readable yearly schedule + rapid recurrent GS.
 #
-# Key timing:
-# - Global rapid cycle length controls simulation resolution.
-# - ticks_per_year = 1 / rapid_cycle_length.
-# - PYT/AYT start at beginning of year and are available after 0.5 years.
-# - EYT starts at beginning of year and is available after 1.5 years
-#   (two years of locations executed as one combined trial block).
+# This is a structured, readability-focused script with explicit sections for:
+# - setup/imports
+# - helper utilities
+# - event verbs
+# - yearly schedule
+# - configuration/state bootstrap
+# - simulation run and reporting
 
+# Setup -------------------------------------------------------------------
 library(AlphaSimR)
 
 source("R/operators.R")
@@ -14,19 +16,22 @@ source("R/readable_api.R")
 source("R/readable_wrappers.R")
 source("R/monitoring.R")
 
+
+# Helper Utilities ---------------------------------------------------------
 make_cross_plan_no_self <- function(n_parents, n_crosses) {
-  if (n_parents < 2L) {
-    return(matrix(c(1L, 1L), ncol = 2L))
-  }
+  if (n_parents < 2L) return(matrix(c(1L, 1L), ncol = 2L))
+
   p1 <- sample.int(n_parents, size = n_crosses, replace = TRUE)
   p2 <- vapply(p1, function(i) {
-    sample.int(n_parents - 1L, size = 1L) -> j
+    j <- sample.int(n_parents - 1L, size = 1L)
     if (j >= i) j <- j + 1L
     as.integer(j)
   }, integer(1))
   cbind(p1, p2)
 }
 
+
+# Event Verbs: Recurrent Cycle --------------------------------------------
 run_recurrent_gs_tick <- function(state, cfg) {
   bp_debug_break(state, cfg)
   src <- get_ready_pop(state, stage = cfg$rc_stage, stream = "main", policy = "latest_one", combine = TRUE, silent = TRUE)
@@ -35,7 +40,8 @@ run_recurrent_gs_tick <- function(state, cfg) {
   pop <- src$pop
   model <- state$gs_models[[cfg$model_id]]
   if (is.null(model)) return(state)
-  pop <- bp_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1), stage_label = "RC")
+
+  pop <- bp_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$source_ids), stage_label = "RC")
   sel <- selectInd(pop, nInd = min(cfg$rc_select_n, pop_n_ind(pop)), use = "ebv", trait = 1, simParam = state$sim$SP)
 
   plan <- make_cross_plan_no_self(pop_n_ind(sel), cfg$rc_crosses)
@@ -47,7 +53,8 @@ run_recurrent_gs_tick <- function(state, cfg) {
     stage = cfg$rc_stage,
     source = src,
     ready_in_years = cfg$rapid_cycle_length,
-    stream = "main"
+    stream = "main",
+    inherit_genotypes = FALSE
   )
   state <- add_stage_cost(
     state = state,
@@ -57,8 +64,40 @@ run_recurrent_gs_tick <- function(state, cfg) {
     n = cfg$rc_crosses,
     unit_cost = cfg$cost_cross
   )
-  state <- close_sources(state, src)
-  state
+  close_sources(state, src)
+}
+
+run_start_rc_if_ready <- function(state, cfg) {
+  bp_debug_break(state, cfg)
+  already <- bp_get_ready_cohorts(state, stage = cfg$rc_stage, stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)
+  if (nrow(already) > 0L) return(state)
+
+  src <- get_ready_pop(state, stage = "PYT", stream = "main", policy = "latest_one", combine = TRUE, silent = TRUE)
+  if (is.null(src)) return(state)
+
+  n <- min(cfg$rc_init_n, pop_n_ind(src$pop))
+  idx <- sample.int(pop_n_ind(src$pop), size = n, replace = FALSE)
+  rc0 <- pop_subset(src$pop, idx)
+
+  state <- put_stage_pop(
+    state = state,
+    pop = rc0,
+    stage = cfg$rc_stage,
+    source = src,
+    ready_in_years = 0,
+    stream = "main",
+    inherit_genotypes = TRUE
+  )
+  run_genotyping(state, list(
+    input_stage = cfg$rc_stage,
+    stream = "main",
+    input_policy = "latest_one",
+    include_not_ready = TRUE,
+    chip = cfg$snp_chip,
+    duration_years = cfg$rapid_cycle_length,
+    cost_per_sample = cfg$cost_genotype,
+    silent = TRUE
+  ))
 }
 
 run_send_rc_to_dh <- function(state, cfg) {
@@ -69,35 +108,31 @@ run_send_rc_to_dh <- function(state, cfg) {
   pop <- src$pop
   model <- state$gs_models[[cfg$model_id]]
   if (!is.null(model)) {
-    pop <- bp_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1), stage_label = "RC")
+    pop <- bp_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$source_ids), stage_label = "RC_to_DH")
     send <- selectInd(pop, nInd = min(cfg$dh_n_entries_per_year, pop_n_ind(pop)), use = "ebv", trait = 1, simParam = state$sim$SP)
   } else {
     idx <- sample.int(pop_n_ind(pop), size = min(cfg$dh_n_entries_per_year, pop_n_ind(pop)), replace = FALSE)
     send <- pop_subset(pop, idx)
   }
-  dh_send <- makeDH(send, nDH = 1, simParam = state$sim$SP)
 
+  dh_send <- makeDH(send, nDH = 1, simParam = state$sim$SP)
   state <- put_stage_pop(
     state = state,
     pop = dh_send,
     stage = cfg$dh_stage,
     source = src,
     ready_in_years = 2,
-    stream = "main"
+    stream = "main",
+    inherit_genotypes = FALSE
   )
-  state <- add_stage_cost(
-    state = state,
-    stage = cfg$dh_stage,
-    event = "dh_seed_pipeline",
-    unit = "line",
-    n = pop_n_ind(dh_send),
-    unit_cost = cfg$cost_line_dh
-  )
-  state
+  add_stage_cost(state, stage = cfg$dh_stage, event = "dh_seed_pipeline", unit = "line", n = pop_n_ind(dh_send), unit_cost = cfg$cost_line_dh)
 }
 
+
+# Event Verbs: Pipeline Trials --------------------------------------------
 run_pyt <- function(state, cfg) {
   bp_debug_break(state, cfg)
+
   sel_fn <- function(state, src, pop_in, cfg_local) {
     n <- min(as.integer(cfg_local$n_pyt), pop_n_ind(pop_in))
     sample.int(pop_n_ind(pop_in), size = n, replace = FALSE)
@@ -137,11 +172,30 @@ run_genotype_pyt <- function(state, cfg) {
   ))
 }
 
+run_genotype_rc <- function(state, cfg) {
+  bp_debug_break(state, cfg)
+  run_genotyping(state, list(
+    input_stage = cfg$rc_stage,
+    stream = "main",
+    input_policy = "latest_one",
+    include_not_ready = TRUE,
+    chip = cfg$snp_chip,
+    duration_years = cfg$rapid_cycle_length,
+    cost_per_sample = cfg$cost_genotype,
+    silent = TRUE
+  ))
+}
+
 run_ayt <- function(state, cfg) {
   bp_debug_break(state, cfg)
+
   sel_fn <- function(state, src, pop_in, cfg_local) {
     model <- state$gs_models[[cfg_local$model_id]]
-    pop_scored <- if (is.null(model)) pop_in else bp_predict_ebv(pop_in, model, state, cfg = list(ebv_trait = 1), stage_label = "AYT")
+    pop_scored <- if (is.null(model)) {
+      pop_in
+    } else {
+      bp_predict_ebv(pop_in, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$cohort_id), stage_label = "AYT")
+    }
     n <- min(cfg_local$n_ayt, pop_n_ind(pop_scored))
     selected <- if (is.null(model)) {
       selectInd(pop_scored, nInd = n, use = "pheno", simParam = state$sim$SP)
@@ -179,20 +233,11 @@ run_ayt <- function(state, cfg) {
 
 run_eyt <- function(state, cfg) {
   bp_debug_break(state, cfg)
-  if (is.null(state$sim$eyt_base_means)) {
-    state$sim$eyt_base_means <- stats::rnorm(10, mean = 0, sd = 1)
-  }
+  if (is.null(state$sim$eyt_base_means)) state$sim$eyt_base_means <- stats::rnorm(10, mean = 0, sd = 1)
 
-  # Two-year EYT block in one call:
-  # - locations 1..10: base_means + year_shift_1
-  # - locations 11..20: base_means + year_shift_2
-  # run_phenotype_trial adds per-location perturbation via env_year_sd.
   year_shift_1 <- stats::rnorm(1, mean = 0, sd = cfg$eyt_year_shift_sd)
   year_shift_2 <- stats::rnorm(1, mean = 0, sd = cfg$eyt_year_shift_sd)
-  env_means_20 <- c(
-    state$sim$eyt_base_means + year_shift_1,
-    state$sim$eyt_base_means + year_shift_2
-  )
+  env_means_20 <- c(state$sim$eyt_base_means + year_shift_1, state$sim$eyt_base_means + year_shift_2)
 
   sel_fn <- function(state, src, pop_in, cfg_local) {
     n <- min(cfg_local$n_eyt, pop_n_ind(pop_in))
@@ -230,25 +275,19 @@ run_release_variety <- function(state, cfg) {
   if (is.null(src)) return(state)
 
   variety <- selectInd(src$pop, nInd = 1, use = "pheno", simParam = state$sim$SP)
-  old_var <- bp_get_ready_cohorts(
-    state,
-    stage = "Variety",
-    stream = "main",
-    active_only = TRUE,
-    as_of_tick = .Machine$integer.max
-  )
+  old_var <- bp_get_ready_cohorts(state, stage = "Variety", stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)
   if (nrow(old_var) > 0L) {
-    for (i in seq_len(nrow(old_var))) {
-      state <- bp_close_cohort(state, old_var$cohort_id[i])
-    }
+    for (i in seq_len(nrow(old_var))) state <- bp_close_cohort(state, old_var$cohort_id[i])
   }
+
   state <- put_stage_pop(
     state = state,
     pop = variety,
     stage = "Variety",
     source = src,
     ready_in_years = 0,
-    stream = "main"
+    stream = "main",
+    inherit_genotypes = TRUE
   )
   state$outputs$varieties <- rbind(
     state$outputs$varieties,
@@ -259,10 +298,7 @@ run_release_variety <- function(state, cfg) {
       stringsAsFactors = FALSE
     )
   )
-
-  # Prevent repeated release from same EYT cohort.
-  state <- close_sources(state, src)
-  state
+  close_sources(state, src)
 }
 
 run_midyear_gp_update <- function(state, cfg) {
@@ -279,32 +315,12 @@ run_midyear_gp_update <- function(state, cfg) {
   ))
 }
 
-run_start_rc_if_ready <- function(state, cfg) {
-  bp_debug_break(state, cfg)
-  already <- bp_get_ready_cohorts(state, stage = cfg$rc_stage, stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)
-  if (nrow(already) > 0L) return(state)
 
-  src <- get_ready_pop(state, stage = "PYT", stream = "main", policy = "latest_one", combine = TRUE, silent = TRUE)
-  if (is.null(src)) return(state)
-
-  n <- min(cfg$rc_init_n, pop_n_ind(src$pop))
-  idx <- sample.int(pop_n_ind(src$pop), size = n, replace = FALSE)
-  rc0 <- pop_subset(src$pop, idx)
-
-  state <- put_stage_pop(
-    state = state,
-    pop = rc0,
-    stage = cfg$rc_stage,
-    source = src,
-    ready_in_years = 0,
-    stream = "main"
-  )
-  state
-}
-
+# Yearly Schedule ----------------------------------------------------------
 run_one_year <- function(state, cfg, year_index) {
   bp_debug_break(state, cfg, year = year_index)
-  # Ordered from parents-side operations toward variety release.
+
+  # Stage events at year start.
   state <- run_start_rc_if_ready(state, cfg)
   state <- run_send_rc_to_dh(state, cfg)
   state <- run_pyt(state, cfg)
@@ -313,14 +329,12 @@ run_one_year <- function(state, cfg, year_index) {
   state <- run_eyt(state, cfg)
   state <- run_release_variety(state, cfg)
 
-  # Quarterly recurrent GS; retrain GP when PYT + genotype become available (mid-year).
+  # Within-year recurrent cycle and mid-year GP update.
   for (q in seq_len(cfg$ticks_per_year)) {
     state <- run_recurrent_gs_tick(state, cfg)
+    state <- run_genotype_rc(state, cfg)
     state <- bp_advance_time(state, n_ticks = 1L)
-
-    if (q == 2L) {
-      state <- run_midyear_gp_update(state, cfg)
-    }
+    if (q == 2L) state <- run_midyear_gp_update(state, cfg)
   }
 
   cat(sprintf(
@@ -340,17 +354,9 @@ run_one_year <- function(state, cfg, year_index) {
   state
 }
 
-run_gstp_loop_demo <- function(n_years = 14L, make_plots = FALSE) {
-  # debug hooks can be controlled in cfg below.
-  founder_haps <- quickHaplo(nInd = 120, nChr = 3, segSites = 80)
-  SP <- SimParam$new(founder_haps)
-  SP$addTraitA(nQtlPerChr = 20)
-  SP$addSnpChip(nSnpPerChr = 40)
-  SP$setVarE(h2 = 0.35)
 
-  founders <- newPop(founder_haps, simParam = SP)
-  parents0 <- selectInd(founders, nInd = 20, use = "gv", simParam = SP)
-
+# Config and Initialization ------------------------------------------------
+make_gstp_cfg <- function(make_plots = FALSE) {
   cfg <- list(
     rapid_cycle_length = 0.25,
     model_id = "gp_main",
@@ -372,7 +378,6 @@ run_gstp_loop_demo <- function(n_years = 14L, make_plots = FALSE) {
 
     n_pyt = 120L,
     gp_max_pyt = 2L,
-
     n_ayt = 40L,
     n_eyt = 6L,
 
@@ -389,26 +394,35 @@ run_gstp_loop_demo <- function(n_years = 14L, make_plots = FALSE) {
     cost_genotype = 25
   )
   cfg$ticks_per_year <- as.integer(round(1 / cfg$rapid_cycle_length))
+  cfg
+}
 
-  state <- bp_init_state(
-    SP = SP,
-    dt = cfg$rapid_cycle_length,
-    start_time = 0,
-    sim = list(default_chip = cfg$snp_chip)
-  )
+init_gstp_sim <- function(cfg) {
+  founder_haps <- quickHaplo(nInd = 120, nChr = 3, segSites = 80)
+  SP <- SimParam$new(founder_haps)
+  SP$addTraitA(nQtlPerChr = 20)
+  SP$addSnpChip(nSnpPerChr = 40)
+  SP$setVarE(h2 = 0.35)
+
+  founders <- newPop(founder_haps, simParam = SP)
+  parents0 <- selectInd(founders, nInd = 20, use = "gv", simParam = SP)
+
+  state <- bp_init_state(SP = SP, dt = cfg$rapid_cycle_length, start_time = 0, sim = list(default_chip = cfg$snp_chip))
   state$sim$make_plots <- cfg$make_plots
 
-  # Bootstrap: small fast start for debugging.
+  list(state = state, SP = SP, parents0 = parents0)
+}
+
+bootstrap_with_pyt_seed <- function(state, SP, parents0, cfg) {
   f1_plan <- matrix(sample.int(pop_n_ind(parents0), size = 40L * 2L, replace = TRUE), ncol = 2)
   f1_0 <- makeCross(parents0, crossPlan = f1_plan, nProgeny = 1, simParam = SP)
   dh_0 <- makeDH(f1_0, nDH = 4, simParam = SP)
-  if (pop_n_ind(dh_0) > cfg$n_pyt) {
-    dh_0 <- pop_subset(dh_0, sample.int(pop_n_ind(dh_0), size = cfg$n_pyt, replace = FALSE))
-  }
-  pyt_0 <- setPheno(dh_0, varE = cfg$varE, reps = 1, traits = 1, simParam = SP)
+  if (pop_n_ind(dh_0) > cfg$n_pyt) dh_0 <- pop_subset(dh_0, sample.int(pop_n_ind(dh_0), size = cfg$n_pyt, replace = FALSE))
 
+  pyt_0 <- setPheno(dh_0, varE = cfg$varE, reps = 1, traits = 1, simParam = SP)
   state <- put_stage_pop(state, pyt_0, stage = "PYT", source = NULL, ready_in_years = 1, stream = "main")
-  state <- run_genotyping(state, list(
+
+  run_genotyping(state, list(
     input_stage = "PYT",
     stream = "main",
     input_policy = "latest_one",
@@ -418,19 +432,25 @@ run_gstp_loop_demo <- function(n_years = 14L, make_plots = FALSE) {
     cost_per_sample = cfg$cost_genotype,
     silent = TRUE
   ))
+}
 
-  for (yr in seq_len(n_years)) {
-    state <- run_one_year(state, cfg, year_index = yr)
-  }
 
+# Top-Level Run ------------------------------------------------------------
+run_gstp_loop_demo_structured <- function(n_years = 14L, make_plots = FALSE) {
+  cfg <- make_gstp_cfg(make_plots = make_plots)
+  sim <- init_gstp_sim(cfg)
+  state <- bootstrap_with_pyt_seed(sim$state, sim$SP, sim$parents0, cfg)
+
+  for (yr in seq_len(n_years)) state <- run_one_year(state, cfg, year_index = yr)
   invisible(state)
 }
 
-if (identical(environment(), globalenv())) {
-  out <- run_gstp_loop_demo(n_years = 14, make_plots = FALSE)
-  ticks_per_year <- as.integer(round(1 / out$time$dt))
+
+# Reporting ----------------------------------------------------------------
+print_gstp_summary <- function(state) {
+  ticks_per_year <- as.integer(round(1 / state$time$dt))
   metrics <- bp_extract_cohort_metrics(
-    state = out,
+    state = state,
     stages = c("DH_PIPE", "PYT", "AYT", "EYT", "Variety"),
     trait = 1L,
     origin_stage = "DH_PIPE",
@@ -439,33 +459,21 @@ if (identical(environment(), globalenv())) {
   )
 
   cat("\nVariety releases:\n")
-  print(out$outputs$varieties)
+  print(state$outputs$varieties)
 
   cat("\nTotal cost by event:\n")
-  print(stats::aggregate(total_cost ~ event, data = out$cost_log, sum))
+  print(stats::aggregate(total_cost ~ event, data = state$cost_log, sum))
 
   cat("\nCohort metrics:\n")
   print(metrics[order(metrics$available_year, metrics$stage), c(
     "cohort_id", "stage", "origin_cohort_id", "origin_year", "available_year",
     "mean_gv", "var_gv", "max_gv", "cor_ebv_gv", "h2", "H2"
   )])
+}
 
-  if (isTRUE(out$sim$make_plots) && requireNamespace("ggplot2", quietly = TRUE)) {
-    metric_names <- c("mean_gv", "var_gv", "max_gv", "cor_ebv_gv", "h2", "H2")
-    for (m in metric_names) {
-      df_origin <- bp_summarize_metric_by_year(metrics, metric = m, year_col = "origin_year")
-      p_origin <- ggplot2::ggplot(df_origin, ggplot2::aes(x = year, y = value, color = stage, group = stage)) +
-        ggplot2::geom_line() +
-        ggplot2::geom_point() +
-        ggplot2::labs(x = "Origin Year", y = m, title = paste(m, "by Origin Year"))
-      print(p_origin)
 
-      df_available <- bp_summarize_metric_by_year(metrics, metric = m, year_col = "available_year")
-      p_available <- ggplot2::ggplot(df_available, ggplot2::aes(x = year, y = value, color = stage, group = stage)) +
-        ggplot2::geom_line() +
-        ggplot2::geom_point() +
-        ggplot2::labs(x = "Available Year", y = m, title = paste(m, "by Available Year"))
-      print(p_available)
-    }
-  }
+# Script Entry -------------------------------------------------------------
+if (identical(environment(), globalenv())) {
+  out <- run_gstp_loop_demo_structured(n_years = 14, make_plots = FALSE)
+  print_gstp_summary(out)
 }

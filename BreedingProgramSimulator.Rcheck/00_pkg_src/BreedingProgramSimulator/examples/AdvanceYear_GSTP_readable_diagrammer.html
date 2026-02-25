@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<style>body{background-color:white;}</style>
+<link href="AdvanceYear_GSTP_readable_diagrammer_files/htmltools-fill-0.5.8.1/fill.css" rel="stylesheet" />
+<script src="AdvanceYear_GSTP_readable_diagrammer_files/htmlwidgets-1.6.4/htmlwidgets.js"></script>
+<script src="AdvanceYear_GSTP_readable_diagrammer_files/viz-1.8.2/viz.js"></script>
+<link href="AdvanceYear_GSTP_readable_diagrammer_files/DiagrammeR-styles-0.2/styles.css" rel="stylesheet" />
+<script src="AdvanceYear_GSTP_readable_diagrammer_files/grViz-binding-1.0.11/grViz.js"></script>
+  <title>grViz</title>
+</head>
+<body>
+<div id="htmlwidget_container">
+  <div class="grViz html-widget html-fill-item" id="htmlwidget-a384d67b758e32212b76" style="width:960px;height:500px;"></div>
+</div>
+<script type="application/json" data-for="htmlwidget-a384d67b758e32212b76">{"x":{"diagram":"digraph Scheme {\n  label=\"AdvanceYear_GSTP_readable.R\";\n  labelloc=\"t\";\n  rankdir=\"LR\";\n  node [shape=box, style=\"rounded\"];\n  \"AYT\";\n  \"DH_PIPE\";\n  \"EYT\";\n  \"MODEL:gp_main\";\n  \"PYT\";\n  \"RC\";\n  \"Variety\";\n  \"PYT\" -> \"RC\" [label=\"run_start_rc_if_ready | stage_transition | selection=random\", color=\"black\", style=\"solid\"];\n  \"RC\" -> \"DH_PIPE\" [label=\"run_send_rc_to_dh | stage_transition | dh,select; selection=ebv\", color=\"black\", style=\"solid\"];\n  \"MODEL:gp_main\" -> \"DH_PIPE\" [label=\"run_send_rc_to_dh | model_dependency | model_used; selection=ebv\", color=\"royalblue4\", style=\"dotted\"];\n  \"DH_PIPE\" -> \"PYT\" [label=\"run_pyt | phenotype_trial | phenotype; selection=random; n=cfg$n_pyt; loc=1; reps=1\", color=\"forestgreen\", style=\"solid\"];\n  \"PYT\" -> \"PYT\" [label=\"run_genotype_pyt | genotyping | genotype; chip=cfg$snp_chip\", color=\"gray40\", style=\"dashed\"];\n  \"MODEL:gp_main\" -> \"AYT\" [label=\"run_ayt | model_dependency | model_used; selection=ebv\", color=\"royalblue4\", style=\"dotted\"];\n  \"PYT\" -> \"AYT\" [label=\"run_ayt | phenotype_trial | phenotype,select; selection=ebv; n=cfg$n_ayt; loc=4; reps=2\", color=\"forestgreen\", style=\"solid\"];\n  \"AYT\" -> \"EYT\" [label=\"run_eyt | phenotype_trial | phenotype,select; selection=pheno; n=cfg$n_eyt; loc=20; reps=4\", color=\"forestgreen\", style=\"solid\"];\n  \"EYT\" -> \"Variety\" [label=\"run_release_variety | stage_transition | select; selection=pheno\", color=\"black\", style=\"solid\"];\n  \"RC\" -> \"RC\" [label=\"run_recurrent_gs_tick | stage_transition | cross,select; selection=ebv\", color=\"black\", style=\"solid\"];\n  \"MODEL:gp_main\" -> \"RC\" [label=\"run_recurrent_gs_tick | model_dependency | model_used; selection=ebv\", color=\"royalblue4\", style=\"dotted\"];\n  \"PYT\" -> \"MODEL:gp_main\" [label=\"run_midyear_gp_update | gp_train | gp_train\", color=\"gray40\", style=\"dashed\"];\n}","config":{"engine":"dot","options":null}},"evals":[],"jsHooks":[]}</script>
+<script type="application/htmlwidget-sizing" data-for="htmlwidget-a384d67b758e32212b76">{"viewer":{"width":450,"height":350,"padding":15,"fill":true},"browser":{"width":960,"height":500,"padding":40,"fill":false}}</script>
+</body>
+</html>

@@ -17,7 +17,17 @@
 * checking if there is a namespace ... OK
 * checking for executable files ... OK
 * checking for hidden files and directories ... OK
-* checking for portable file names ... OK
+* checking for portable file names ... NOTE
+Found the following non-portable file paths:
+  BreedingProgramSimulator/examples/AdvanceYear_GSTP_readable_diagrammer_files/DiagrammeR-styles-0.2/styles.css
+  BreedingProgramSimulator/examples/AdvanceYear_GSTP_readable_diagrammer_files/grViz-binding-1.0.11/grViz.js
+  BreedingProgramSimulator/examples/AdvanceYear_GSTP_readable_diagrammer_files/htmltools-fill-0.5.8.1/fill.css
+  BreedingProgramSimulator/examples/AdvanceYear_GSTP_readable_diagrammer_files/htmlwidgets-1.6.4/htmlwidgets.js
+
+Tarballs are only required to store paths of up to 100 bytes and cannot
+store those of more than 256 bytes, with restrictions including to 100
+bytes for the final component.
+See section ‘Package structure’ in the ‘Writing R Extensions’ manual.
 * checking for sufficient/correct file permissions ... OK
 * checking whether package ‘BreedingProgramSimulator’ can be installed ... OK
 * checking installed package size ... OK
@@ -59,4 +69,4 @@ Extensions’ manual.
 * checking tests ... OK
   Running ‘testthat.R’
 * DONE
-Status: 1 WARNING
+Status: 1 WARNING, 1 NOTE

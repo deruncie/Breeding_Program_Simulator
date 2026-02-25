@@ -127,8 +127,29 @@ test_that("bp_predict_ebv accepts multi-trait matrix output", {
   pop <- newPop(h, simParam = SP)
 
   state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0, sim = list(default_chip = 1L))
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = pop,
+    stage = "TEST",
+    duration_years = 0
+  )
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  pop <- state$pops[[cid]]
+  state$genotype_log <- rbind(
+    state$genotype_log,
+    data.frame(
+      cohort_id = cid,
+      chip = "1",
+      started_tick = 0L,
+      done_tick = 0L,
+      available_tick = 0L,
+      n_ind = pop@nInd,
+      stringsAsFactors = FALSE
+    )
+  )
   model_entry <- list(model = list(dummy = TRUE))
   cfg <- list(
+    cohort_ids = cid,
     predict_ebv_fn = function(target_pop, model_obj, state, cfg, model_entry) {
       cbind(seq_len(target_pop@nInd), rev(seq_len(target_pop@nInd)))
     }
@@ -138,4 +159,191 @@ test_that("bp_predict_ebv accepts multi-trait matrix output", {
   expect_equal(dim(pop2@ebv), c(pop2@nInd, 2L))
   s <- selectInd(pop2, nInd = 3, use = "ebv", trait = 2, simParam = SP)
   expect_equal(s@nInd, 3L)
+})
+
+test_that("bp_predict_ebv requires logged genotyping by default", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  h <- quickHaplo(12, 2, 40)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+  pop <- newPop(h, simParam = SP)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0, sim = list(default_chip = 1L))
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = pop,
+    stage = "TEST",
+    duration_years = 0
+  )
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  pop <- state$pops[[cid]]
+
+  model_entry <- list(model = list(dummy = TRUE), chip = "1")
+  cfg <- list(
+    cohort_ids = cid,
+    predict_ebv_fn = function(target_pop, model_obj, state, cfg, model_entry) {
+      seq_len(target_pop@nInd)
+    }
+  )
+
+  expect_error(
+    BreedingProgramSimulator:::bp_predict_ebv(pop, model_entry, state, cfg, stage_label = "TEST"),
+    "requires genotyping"
+  )
+})
+
+test_that("cohort availability and genotyped flags are gated by tick", {
+  state <- BreedingProgramSimulator:::bp_init_state(
+    SP = NULL,
+    dt = 1,
+    start_time = 0,
+    sim = list(default_chip = 1L)
+  )
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = data.frame(v = 1:4),
+    stage = "F5",
+    duration_years = 2
+  )
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+
+  ready0 <- BreedingProgramSimulator:::bp_get_ready_cohorts(state, stage = "F5")
+  expect_equal(nrow(ready0), 0L)
+
+  state$genotype_log <- rbind(
+    state$genotype_log,
+    data.frame(
+      cohort_id = cid,
+      chip = "1",
+      started_tick = 0L,
+      done_tick = 2L,
+      available_tick = 2L,
+      n_ind = 4L,
+      stringsAsFactors = FALSE
+    )
+  )
+  state <- BreedingProgramSimulator:::bp_refresh_genotyped_flags(state)
+  expect_false(state$cohorts$genotyped[match(cid, state$cohorts$cohort_id)])
+
+  state <- BreedingProgramSimulator:::bp_advance_time(state, n_ticks = 2L)
+  ready2 <- BreedingProgramSimulator:::bp_get_ready_cohorts(state, stage = "F5")
+  expect_equal(ready2$cohort_id, cid)
+  expect_true(state$cohorts$genotyped[match(cid, state$cohorts$cohort_id)])
+})
+
+test_that("run_genotyping force allows repeated cohort-chip events", {
+  state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = data.frame(v = 1:6),
+    stage = "PYT",
+    duration_years = 0
+  )
+
+  cfg <- list(input_stage = "PYT", chip = 1L, duration_years = 1, cost_per_sample = 2)
+  state <- BreedingProgramSimulator:::run_genotyping(state, cfg)
+  state <- BreedingProgramSimulator:::run_genotyping(state, modifyList(cfg, list(force = TRUE)))
+
+  expect_equal(nrow(state$genotype_log), 2L)
+  expect_equal(sum(state$cost_log$event == "genotyping"), 2L)
+})
+
+test_that("bp_get_training_cohorts filters by lookback window and chip availability", {
+  state <- BreedingProgramSimulator:::bp_init_state(
+    SP = NULL,
+    dt = 1,
+    start_time = 0,
+    sim = list(default_chip = 1L)
+  )
+
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = data.frame(v = 1:3),
+    stage = "PYT",
+    duration_years = 0
+  )
+  old_cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+
+  state <- BreedingProgramSimulator:::bp_advance_time(state, n_ticks = 8L)
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = data.frame(v = 1:4),
+    stage = "PYT",
+    duration_years = 0
+  )
+  new_cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+
+  state$genotype_log <- rbind(
+    state$genotype_log,
+    data.frame(
+      cohort_id = old_cid,
+      chip = "1",
+      started_tick = 0L,
+      done_tick = 0L,
+      available_tick = 0L,
+      n_ind = 3L,
+      stringsAsFactors = FALSE
+    ),
+    data.frame(
+      cohort_id = new_cid,
+      chip = "1",
+      started_tick = 8L,
+      done_tick = 8L,
+      available_tick = 8L,
+      n_ind = 4L,
+      stringsAsFactors = FALSE
+    )
+  )
+
+  cfg <- list(from_stage = "PYT", chip = 1L, lookback_years = 3)
+  out <- BreedingProgramSimulator:::bp_get_training_cohorts(state, cfg)
+  expect_equal(out$cohort_id, new_cid)
+})
+
+test_that("run_phenotype_trial respects log_per_environment and log_aggregate", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  set.seed(11)
+  h <- quickHaplo(12, 2, 50)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = newPop(h, simParam = SP),
+    stage = "F5",
+    duration_years = 0
+  )
+
+  cfg_env_only <- list(
+    input_stage = "F5",
+    output_stage = "PYT",
+    traits = 1L,
+    n_loc = 3L,
+    reps = 2L,
+    varE = 1,
+    duration_years = 0,
+    use_env_control = TRUE,
+    log_per_environment = TRUE,
+    log_aggregate = FALSE,
+    consume_input = FALSE
+  )
+  state1 <- BreedingProgramSimulator:::run_phenotype_trial(state, cfg_env_only)
+  expect_equal(sort(unique(state1$phenotype_log$environment)), c(1L, 2L, 3L))
+  expect_equal(
+    nrow(state1$phenotype_log),
+    BreedingProgramSimulator:::pop_n_ind(state1$pops[[state1$cohorts$cohort_id[2]]]) * 3L
+  )
+
+  cfg_agg_only <- modifyList(cfg_env_only, list(log_per_environment = FALSE, log_aggregate = TRUE))
+  state2 <- BreedingProgramSimulator:::run_phenotype_trial(state, cfg_agg_only)
+  expect_equal(unique(state2$phenotype_log$environment), 0L)
+  expect_equal(
+    nrow(state2$phenotype_log),
+    BreedingProgramSimulator:::pop_n_ind(state2$pops[[state2$cohorts$cohort_id[2]]])
+  )
 })

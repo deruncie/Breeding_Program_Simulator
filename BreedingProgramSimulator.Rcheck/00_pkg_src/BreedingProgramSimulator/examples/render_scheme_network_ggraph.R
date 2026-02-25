@@ -54,6 +54,8 @@ make_vis_edges <- function(edge_df) {
       add(from, to, "model_dep", "model used")
     } else if (event == "gp_train") {
       add(from, to, "model_train", "train model")
+    } else if (event == "genotyping") {
+      add(paste0("GENO:", from), from, "genotype_info", "genotype")
     }
   }
 
@@ -99,6 +101,7 @@ nodes <- sort(unique(c(vis_edges$from_stage, vis_edges$to_stage)))
 nodes_df <- data.frame(name = nodes, stringsAsFactors = FALSE)
 nodes_df$node_class <- "cohort"
 nodes_df$node_class[grepl("^MODEL:", nodes_df$name)] <- "model"
+nodes_df$node_class[grepl("^GENO:", nodes_df$name)] <- "genotype"
 nodes_df$node_class[nodes_df$name %in% cycle_nodes] <- "cohort_cycle"
 
 # Stage annotations from phenotype events.
@@ -142,31 +145,9 @@ if (nrow(rc_self) > 0L) {
   if (!is.na(idx_rc) && nzchar(rc_ann)) nodes_df$annotation[idx_rc] <- rc_ann
 }
 
-# Add chip annotation to any stage with genotyping events.
-geno_events <- raw_edges[raw_edges$event == "genotyping", c("from_stage", "details"), drop = FALSE]
-if (nrow(geno_events) > 0L) {
-  by_stage <- split(geno_events$details, geno_events$from_stage)
-  for (stg in names(by_stage)) {
-    chips <- vapply(by_stage[[stg]], function(d) {
-      ch <- extract_detail(as.character(d), "chip")
-      if (is.na(ch) || !nzchar(ch)) return(NA_character_)
-      ch
-    }, character(1))
-    chips <- unique(chips[!is.na(chips) & nzchar(chips)])
-    if (length(chips) == 0L) next
-    chip_line <- paste0("chip=", paste(chips, collapse = ","))
-    idx <- match(stg, nodes_df$name)
-    if (is.na(idx)) next
-    if (nzchar(nodes_df$annotation[idx])) {
-      nodes_df$annotation[idx] <- paste(nodes_df$annotation[idx], chip_line, sep = "\n")
-    } else {
-      nodes_df$annotation[idx] <- chip_line
-    }
-  }
-}
-
 nodes_df$title <- nodes_df$name
 nodes_df$title <- sub("^MODEL:(.+)$", "Model\n\\1", nodes_df$title)
+nodes_df$title <- sub("^GENO:(.+)$", "Genotypes\n\\1", nodes_df$title)
 nodes_df$title[nodes_df$name %in% cycle_nodes] <- sub("_cycle$", "\ncycle", nodes_df$name[nodes_df$name %in% cycle_nodes])
 
 nodes_df$label <- ifelse(
@@ -185,63 +166,17 @@ edges_df <- data.frame(
 
 graph <- tidygraph::tbl_graph(nodes = nodes_df, edges = edges_df, directed = TRUE)
 
-# Adaptive column layout:
-# - Start from Sugiyama layering (minimum practical number of columns).
-# - Then nudge special node classes (model/genotype/cycle) to reduce overlaps.
-layout_tbl <- ggraph::create_layout(graph, layout = "sugiyama")
-layout_df <- as.data.frame(layout_tbl)
+manual_pos <- data.frame(
+  name = c("DH_PIPE", "PYT", "AYT", "EYT", "Variety", "RC", "RC_cycle", "MODEL:gp_main", "GENO:PYT"),
+  x = c(0.46, 0.46, 0.46, 0.46, 0.46, 0.00, 0.08, 0.00, 0.00),
+  y = c(1.10, 0.45, -0.25, -0.95, -1.65, -1.05, -1.34, -0.15, 1.85),
+  stringsAsFactors = FALSE
+)
 
-# Compress x into compact integer-like ranks.
-x_vals <- sort(unique(layout_df$x))
-x_rank <- match(layout_df$x, x_vals) - 1L
-layout_df$x <- as.numeric(x_rank) * 0.20
-
-name_to_idx <- setNames(seq_len(nrow(layout_df)), layout_df$name)
-
-# Place information nodes slightly left of cohort pipeline and de-overlap by local offsets.
-info_idx <- which(layout_df$name %in% nodes_df$name[nodes_df$node_class %in% c("model")])
-if (length(info_idx) > 0L) {
-  x_left <- min(layout_df$x, na.rm = TRUE) - 0.18
-  layout_df$x[info_idx] <- x_left
-
-  # Anchor info nodes near the cohort(s) they feed into, then de-overlap locally.
-  info_names <- layout_df$name[info_idx]
-  y_anchor <- vapply(info_names, function(nm) {
-    tg <- unique(vis_edges$to_stage[vis_edges$from_stage == nm])
-    tg_idx <- match(tg, layout_df$name)
-    tg_y <- layout_df$y[tg_idx[!is.na(tg_idx)]]
-    if (length(tg_y) == 0L) return(0)
-    mean(tg_y)
-  }, numeric(1))
-
-  # If multiple info nodes share nearly the same anchor y, stagger them.
-  ord <- order(y_anchor, decreasing = TRUE)
-  y_out <- y_anchor
-  group_key <- round(y_anchor / 0.15)
-  for (g in unique(group_key[ord])) {
-    members <- which(group_key == g)
-    if (length(members) <= 1L) next
-    offsets <- seq(from = 0.12, to = -0.12, length.out = length(members))
-    # Keep model slightly below genotype when stacked.
-    members <- members[order(grepl("^MODEL:", info_names[members]))]
-    y_out[members] <- y_anchor[members] + offsets
-  }
-  layout_df$y[info_idx] <- y_out
-}
-
-# Place cycle duplicate nodes near their primary node.
-cycle_idx <- which(grepl("_cycle$", layout_df$name))
-for (i in cycle_idx) {
-  base <- sub("_cycle$", "", layout_df$name[i])
-  j <- name_to_idx[[base]]
-  if (!is.null(j) && !is.na(j)) {
-    layout_df$x[i] <- layout_df$x[j] + 0.08
-    layout_df$y[i] <- layout_df$y[j] - 0.20
-  }
-}
-
-# Use manual layout from adjusted coordinates.
-layout_tbl <- ggraph::create_layout(graph, layout = "manual", x = layout_df$x, y = layout_df$y)
+pos_idx <- match(nodes_df$name, manual_pos$name)
+nodes_df$x <- ifelse(is.na(pos_idx), 0, manual_pos$x[pos_idx])
+nodes_df$y <- ifelse(is.na(pos_idx), 0, manual_pos$y[pos_idx])
+layout_tbl <- ggraph::create_layout(graph, layout = "manual", x = nodes_df$x, y = nodes_df$y)
 
 edge_data_all <- function(layout) ggraph::get_edges()(layout)
 edge_data_labeled <- function(layout) {
@@ -287,7 +222,8 @@ p <- ggraph::ggraph(layout_tbl) +
     values = c(
       cohort = "white",
       cohort_cycle = "#eef7ef",
-      model = "#e8f0ff"
+      model = "#e8f0ff",
+      genotype = "#f3f4f6"
     )
   ) +
   ggraph::scale_edge_color_manual(
@@ -302,14 +238,11 @@ p <- ggraph::ggraph(layout_tbl) +
     values = c(
       cohort = "solid",
       model_dep = "dotdash",
-      model_train = "dashed"
+      model_train = "dashed",
+      genotype_info = "dashed"
     )
   ) +
-  ggplot2::coord_cartesian(
-    xlim = c(min(layout_df$x, na.rm = TRUE) - 0.04, max(layout_df$x, na.rm = TRUE) + 0.08),
-    ylim = c(min(layout_df$y, na.rm = TRUE) - 0.18, max(layout_df$y, na.rm = TRUE) + 0.18),
-    clip = "off"
-  ) +
+  ggplot2::coord_cartesian(xlim = c(-0.04, 0.52), ylim = c(-1.92, 2.02), clip = "off") +
   ggplot2::theme_void() +
   ggplot2::theme(
     panel.background = ggplot2::element_rect(fill = "white", color = NA),

@@ -20,8 +20,8 @@ Type 'q()' to quit R.
 > test_check("BreedingProgramSimulator")
 Loading required package: BreedingProgramSimulator
 Loading required package: R6
-[ FAIL 0 | WARN 0 | SKIP 0 | PASS 20 ]
+[ FAIL 0 | WARN 0 | SKIP 0 | PASS 44 ]
 > 
 > proc.time()
    user  system elapsed 
-  0.469   0.106   1.324 
+  0.532   0.122   1.041 

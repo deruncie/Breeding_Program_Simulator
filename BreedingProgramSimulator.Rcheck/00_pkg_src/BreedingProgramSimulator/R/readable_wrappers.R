@@ -236,7 +236,8 @@ run_select_variety_and_recycle <- function(state, cfg) {
       )
     )
 
-    pop_ebv <- bp_predict_ebv(pop = pop, model_entry = model_entry, state = state, cfg = cfg, stage_label = stage_label)
+    cfg_pred <- utils::modifyList(as.list(cfg), list(cohort_ids = src$cohort_id))
+    pop_ebv <- bp_predict_ebv(pop = pop, model_entry = model_entry, state = state, cfg = cfg_pred, stage_label = stage_label)
     n_par <- as.integer(cfg$n_new_parents %||% 50L)
     n_par <- min(n_par, pop_n_ind(pop_ebv))
     ebv_trait <- as.integer(cfg$ebv_trait %||% 1L)

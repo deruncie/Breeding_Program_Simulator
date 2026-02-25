@@ -226,6 +226,36 @@ bp_add_cohort <- function(
   state
 }
 
+# Propagate genotype-log availability from one source cohort to a copied subset cohort.
+bp_inherit_genotypes_from_source <- function(state, new_cohort_id, source_ids) {
+  ids <- unique(as.character(source_ids))
+  ids <- ids[!is.na(ids) & nzchar(ids) & ids != "NA"]
+  if (length(ids) != 1L) {
+    return(state)
+  }
+  src <- ids[[1L]]
+  src_rows <- state$genotype_log[state$genotype_log$cohort_id == src, , drop = FALSE]
+  if (nrow(src_rows) == 0L) return(state)
+
+  new_idx <- match(new_cohort_id, state$cohorts$cohort_id)
+  if (is.na(new_idx)) return(state)
+  new_n <- as.integer(state$cohorts$n_ind[new_idx])
+
+  chips <- unique(as.character(src_rows$chip))
+  for (ckey in chips) {
+    if (any(state$genotype_log$cohort_id == new_cohort_id & state$genotype_log$chip == ckey)) next
+
+    s2 <- src_rows[src_rows$chip == ckey, , drop = FALSE]
+    j <- which.min(s2$available_tick)
+    row <- s2[j, , drop = FALSE]
+    row$cohort_id <- as.character(new_cohort_id)
+    row$n_ind <- new_n
+    state$genotype_log <- rbind(state$genotype_log, row)
+  }
+
+  bp_refresh_genotyped_flags(state)
+}
+
 # Return the most recently created cohort id.
 bp_last_cohort_id <- function(state) {
   if (nrow(state$cohorts) == 0L) return(NA_character_)
@@ -385,13 +415,14 @@ put_stage_pop <- function(
   ready_in_years = 0,
   stream = NULL,
   cycle_id = NULL,
-  active = TRUE
+  active = TRUE,
+  inherit_genotypes = FALSE
 ) {
   src_ids <- if (is.null(source)) NA_character_ else paste(source$source_ids, collapse = ";")
   stream_val <- if (!is.null(stream)) stream else if (!is.null(source)) source$stream else "main"
   cycle_val <- if (!is.null(cycle_id)) cycle_id else if (!is.null(source)) source$cycle_id else "cycle_1"
 
-  bp_add_cohort(
+  state <- bp_add_cohort(
     state = state,
     pop = pop,
     stage = stage,
@@ -401,6 +432,15 @@ put_stage_pop <- function(
     duration_years = ready_in_years,
     active = active
   )
+
+  if (isTRUE(inherit_genotypes) && !is.null(source) && !is.null(source$source_ids)) {
+    state <- bp_inherit_genotypes_from_source(
+      state = state,
+      new_cohort_id = bp_last_cohort_id(state),
+      source_ids = source$source_ids
+    )
+  }
+  state
 }
 
 # Add a cost row, defaulting to the most recently created cohort.
@@ -678,6 +718,13 @@ run_phenotype_trial <- function(state, cfg) {
       duration_years = cfg$duration_years %||% 1
     )
     new_cohort_id <- bp_last_cohort_id(state)
+    if (isTRUE(cfg$inherit_genotypes %||% TRUE)) {
+      state <- bp_inherit_genotypes_from_source(
+        state = state,
+        new_cohort_id = new_cohort_id,
+        source_ids = src$cohort_id
+      )
+    }
 
     avail_tick <- state$cohorts$available_tick[match(new_cohort_id, state$cohorts$cohort_id)]
     stage_name <- cfg$output_stage %||% cfg$trial_name
@@ -839,8 +886,49 @@ bp_call_user_fn <- function(fn, args, fn_label, stage_label) {
   )
 }
 
+# Ensure one or more cohorts have available genotype records for the requested chip.
+bp_assert_genotyped_cohorts <- function(state, cohort_ids, chip, stage_label = "unknown", context = "prediction") {
+  ids <- unique(as.character(cohort_ids))
+  ids <- ids[!is.na(ids) & nzchar(ids)]
+  if (length(ids) == 0L) {
+    stop(sprintf("%s for stage '%s' requires cohort_ids for genotype validation", context, stage_label), call. = FALSE)
+  }
+
+  ckey <- chip_key(chip)
+  bad <- vapply(ids, function(cid) {
+    !any(
+      state$genotype_log$cohort_id == cid &
+        state$genotype_log$chip == ckey &
+        state$genotype_log$available_tick <= state$time$tick
+    )
+  }, logical(1))
+
+  if (any(bad)) {
+    miss <- paste(ids[bad], collapse = ", ")
+    stop(
+      sprintf(
+        "%s for stage '%s' requires genotyping for chip '%s'; missing cohorts: %s",
+        context, stage_label, ckey, miss
+      ),
+      call. = FALSE
+    )
+  }
+}
+
 # Predict EBV using either default AlphaSimR setEBV or a user hook.
 bp_predict_ebv <- function(pop, model_entry, state, cfg, stage_label = "unknown") {
+  require_genotyped <- isTRUE(cfg$require_genotyped %||% TRUE)
+  if (require_genotyped) {
+    chip_for_pred <- cfg$chip %||% model_entry$chip %||% state$sim$default_chip
+    bp_assert_genotyped_cohorts(
+      state = state,
+      cohort_ids = cfg$cohort_ids %||% NULL,
+      chip = chip_for_pred,
+      stage_label = stage_label,
+      context = "EBV prediction"
+    )
+  }
+
   predict_fn <- cfg$predict_ebv_fn %||% model_entry$predict_ebv_fn %||% NULL
 
   if (is.function(predict_fn)) {

@@ -8,10 +8,11 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 Depends: R (>= 4.1.0)
 Imports: methods
-Suggests: testthat (>= 3.0.0), ggplot2, AlphaSimR
+Suggests: testthat (>= 3.0.0), shiny, ggplot2, AlphaSimR
 Config/testthat/edition: 3
+RoxygenNote: 7.3.2
 NeedsCompilation: no
-Packaged: 2026-02-23 21:23:00 UTC; deruncie
+Packaged: 2026-02-25 16:35:32 UTC; deruncie
 Author: DER User [aut, cre]
 Maintainer: DER User <user@example.com>
-Built: R 4.4.3; ; 2026-02-23 21:23:01 UTC; unix
+Built: R 4.4.3; ; 2026-02-25 16:35:36 UTC; unix
