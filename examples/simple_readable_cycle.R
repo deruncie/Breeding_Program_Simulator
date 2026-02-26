@@ -9,7 +9,122 @@ library(AlphaSimR)
 
 source("R/operators.R")
 source("R/readable_api.R")
-source("R/readable_wrappers.R")
+
+# --- local stage functions (self-contained example)
+run_make_f1_local <- function(state, cfg) {
+  src <- get_ready_pop(state, stage = cfg$input_stage, policy = "latest_one", combine = TRUE, silent = TRUE)
+  if (is.null(src)) return(state)
+
+  n_par <- pop_n_ind(src$pop)
+  plan <- matrix(sample.int(n_par, size = as.integer(cfg$n_crosses) * 2L, replace = TRUE), ncol = 2L)
+  f1 <- makeCross(src$pop, crossPlan = plan, nProgeny = as.integer(cfg$n_progeny_per_cross), simParam = state$sim$SP)
+
+  state <- put_stage_pop(
+    state = state,
+    pop = f1,
+    stage = cfg$output_stage,
+    source = src,
+    ready_in_years = cfg$duration_years,
+    selection_strategy = "Random parent sampling",
+    cross_strategy = "Random pairing with replacement"
+  )
+  state <- add_stage_cost(state, stage = cfg$output_stage, event = "crossing", unit = "cross", n = cfg$n_crosses, unit_cost = cfg$cost_per_cross)
+  close_sources(state, src)
+}
+
+run_ssd_to_f5_local <- function(state, cfg) {
+  ready <- bp_get_ready_cohorts(state, stage = cfg$input_stage)
+  if (nrow(ready) == 0L) return(state)
+  ready <- bp_select_source_rows(state, ready, list(input_policy = "all_ready"))
+  if (nrow(ready) == 0L) return(state)
+
+  for (i in seq_len(nrow(ready))) {
+    src <- ready[i, , drop = FALSE]
+    pop <- state$pops[[src$cohort_id]]
+    pop <- self(pop, nProgeny = as.integer(cfg$n_lines_per_f1), simParam = state$sim$SP)
+    pop <- self(pop, nProgeny = 1L, simParam = state$sim$SP)
+    pop <- self(pop, nProgeny = 1L, simParam = state$sim$SP)
+    pop <- self(pop, nProgeny = 1L, simParam = state$sim$SP)
+
+    state <- put_stage_pop(
+      state = state,
+      pop = pop,
+      stage = cfg$output_stage,
+      source_ids = src$cohort_id,
+      ready_in_years = cfg$duration_years,
+      selection_strategy = "SSD to F5 (4 selfing generations)"
+    )
+    state <- add_stage_cost(
+      state = state,
+      stage = cfg$output_stage,
+      cohort_id = bp_last_cohort_id(state),
+      event = "ssd",
+      unit = "line",
+      n_units = pop_n_ind(pop),
+      unit_cost = cfg$cost_per_line
+    )
+    if (isTRUE(cfg$consume_input)) state <- bp_close_cohort(state, src$cohort_id)
+  }
+  state
+}
+
+run_pyt_local <- function(state, cfg) {
+  run_phenotype_trial(state, list(
+    trial_name = "PYT",
+    input_stage = cfg$input_stage,
+    output_stage = cfg$output_stage,
+    input_policy = "latest_one",
+    selection_strategy = "All lines from latest F5",
+    traits = cfg$traits,
+    n_loc = cfg$n_loc,
+    reps = cfg$reps,
+    varE = cfg$varE,
+    duration_years = cfg$duration_years,
+    consume_input = cfg$consume_input,
+    cost_per_plot = cfg$cost_per_plot,
+    silent = TRUE
+  ))
+}
+
+run_select_variety_and_recycle_local <- function(state, cfg) {
+  src <- get_ready_pop(state, stage = cfg$input_stage, policy = "latest_one", combine = TRUE, silent = TRUE)
+  if (is.null(src)) return(state)
+  model <- state$gs_models[[cfg$model_id]]
+  if (is.null(model)) return(state)
+
+  pop <- src$pop
+  variety <- selectInd(pop, nInd = as.integer(cfg$n_variety), use = "pheno", simParam = state$sim$SP)
+  state <- put_stage_pop(
+    state = state,
+    pop = variety,
+    stage = "Variety",
+    source = src,
+    ready_in_years = 0,
+    selection_strategy = "Top phenotype in PYT"
+  )
+  state$outputs$varieties <- rbind(
+    state$outputs$varieties,
+    data.frame(tick = as.integer(state$time$tick), source_cohort_id = src$source_ids[[1]], variety_id = as.integer(variety@id), stringsAsFactors = FALSE)
+  )
+
+  pop_ebv <- run_predict_ebv(pop = pop, model_entry = model, state = state, cfg = list(cohort_ids = src$source_ids), stage_label = "PYT")
+  n_new <- min(as.integer(cfg$n_new_parents), pop_n_ind(pop_ebv))
+  new_par <- selectInd(pop_ebv, nInd = n_new, use = "ebv", trait = 1, simParam = state$sim$SP)
+
+  old <- bp_get_ready_cohorts(state, stage = cfg$parent_stage, active_only = TRUE, as_of_tick = .Machine$integer.max)
+  if (nrow(old) > 0L) for (i in seq_len(nrow(old))) state <- bp_close_cohort(state, old$cohort_id[i])
+
+  state <- put_stage_pop(
+    state = state,
+    pop = new_par,
+    stage = cfg$parent_stage,
+    source = src,
+    ready_in_years = cfg$parent_duration_years,
+    selection_strategy = "Top EBV from PYT using gp_main"
+  )
+  state <- add_stage_cost(state, stage = cfg$parent_stage, event = "parent_recycle", unit = "line", n = pop_n_ind(new_par), unit_cost = cfg$cost_per_parent)
+  close_sources(state, src)
+}
 
 # --- setup
 founder_haps <- quickHaplo(nInd = 120, nChr = 6, segSites = 250)
@@ -91,20 +206,12 @@ cfg <- list(
 
 # --- yearly loop (4 ticks/year)
 for (yr in 1:10) {
-  state <- run_make_f1(
-    state = state,
-    input_stage = cfg$cross$input_stage,
-    output_stage = cfg$cross$output_stage,
-    n_crosses = cfg$cross$n_crosses,
-    n_progeny_per_cross = cfg$cross$n_progeny_per_cross,
-    ready_in_years = cfg$cross$duration_years,
-    cost_per_cross = cfg$cross$cost_per_cross
-  )
-  state <- run_ssd_to_f5(state, cfg$ssd)
-  state <- run_multienv_trial(state)
+  state <- run_make_f1_local(state, cfg$cross)
+  state <- run_ssd_to_f5_local(state, cfg$ssd)
+  state <- run_pyt_local(state, cfg$pyt)
   state <- run_genotyping(state, cfg$genotype)
   state <- run_train_gp_model(state, cfg$gp)
-  state <- run_select_variety_and_recycle(state, cfg$recycle)
+  state <- run_select_variety_and_recycle_local(state, cfg$recycle)
 
   state <- bp_advance_time(state, n_ticks = 4L)
 

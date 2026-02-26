@@ -217,8 +217,7 @@ run_selfing_stage <- function(state, cfg) {
 #' @param fail_if_no_ready Error if no source cohort is ready.
 #'
 #' @return Updated program state.
-#' @export
-run_make_f1 <- function(
+run_make_f1_TEMPLATE <- function(
   state,
   input_stage = "PARENT",
   output_stage = "F1",
@@ -291,8 +290,7 @@ run_make_f1 <- function(
 #' @param cfg Selfing configuration overrides.
 #'
 #' @return Updated program state.
-#' @export
-run_ssd_to_f5 <- function(state, cfg) {
+run_ssd_to_f5_TEMPLATE <- function(state, cfg) {
   cfg2 <- utils::modifyList(
     list(
       output_stage = "F5",
@@ -317,17 +315,16 @@ run_ssd_to_f5 <- function(state, cfg) {
 #' @param cfg Selection/recycling configuration list.
 #'
 #' @return Updated program state.
-#' @export
-run_select_variety_and_recycle <- function(state, cfg) {
+run_select_variety_and_recycle_TEMPLATE <- function(state, cfg) {
   stage_label <- as.character(cfg$input_stage %||% "unknown")
   ready <- bp_get_ready_cohorts(state, stage = cfg$input_stage, stream = cfg$stream %||% NULL)
   if (nrow(ready) == 0L) {
-    bp_handle_no_ready(cfg, "run_select_variety_and_recycle", stage_label)
+    bp_handle_no_ready(cfg, "run_select_variety_and_recycle_TEMPLATE", stage_label)
     return(state)
   }
   ready <- bp_select_source_rows(state, ready, cfg)
   if (nrow(ready) == 0L) {
-    bp_handle_no_ready(cfg, "run_select_variety_and_recycle", stage_label, context = "source selection policy returned no cohorts")
+    bp_handle_no_ready(cfg, "run_select_variety_and_recycle_TEMPLATE", stage_label, context = "source selection policy returned no cohorts")
     return(state)
   }
 
@@ -409,8 +406,7 @@ run_select_variety_and_recycle <- function(state, cfg) {
 #' @param state Program state.
 #'
 #' @return Updated program state.
-#' @export
-run_multienv_trial <- function(state) {
+run_multienv_trial_TEMPLATE <- function(state) {
   input_stage <- "F5"
   output_stage <- "PYT"
   policy <- "latest_one"
@@ -563,8 +559,7 @@ run_multienv_trial <- function(state) {
 #' @param fail_if_no_ready Error if no source is ready.
 #'
 #' @return Updated program state.
-#' @export
-run_pyt <- function(
+run_pyt_TEMPLATE <- function(
   state,
   input_stage = "F5",
   output_stage = "PYT",
