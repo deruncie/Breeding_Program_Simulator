@@ -6,19 +6,20 @@
 #   source("R/monitoring.R")
 #   source("examples/plot_state_metrics_simple.R")
 #   # after you create `state`:
-#   m <- bp_collect_metrics(state)
-#   bp_plot_mean_gv_origin(m)
-#   bp_plot_mean_gv_available(m)
-#   bp_plot_metric_origin(m, metric = "h2")
+  m <- bp_collect_metrics(state)
+  bp_plot_mean_gv_origin(m)
+  bp_plot_mean_gv_available(m)
+  bp_plot_metric_available(m, metric = "mean_gv")
+  bp_plot_metric_origin(m, metric = "mean_gv")
 
 library(ggplot2)
 
 # Extract standard cohort metrics from a state object.
 bp_collect_metrics <- function(
   state,
-  stages = c("DH_PIPE", "PYT", "AYT", "EYT", "Variety"),
+  stages = c("PD_DH_INPUT", "PYT", "AYT", "EYT", "Variety"),
   trait = 1L,
-  origin_stage = "DH_PIPE",
+  origin_stage = "PD_DH_INPUT",
   include_inactive = TRUE
 ) {
   ticks_per_year <- as.integer(round(1 / state$time$dt))
