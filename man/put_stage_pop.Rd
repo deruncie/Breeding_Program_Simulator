@@ -9,11 +9,14 @@ put_stage_pop(
   pop,
   stage,
   source = NULL,
+  source_ids = NULL,
   ready_in_years = 0,
   stream = NULL,
   cycle_id = NULL,
   active = TRUE,
-  inherit_genotypes = FALSE
+  inherit_genotypes = FALSE,
+  selection_strategy = NA_character_,
+  cross_strategy = NA_character_
 )
 }
 \arguments{
@@ -23,7 +26,11 @@ put_stage_pop(
 
 \item{stage}{Output stage.}
 
-\item{source}{Optional source bundle from [get_ready_pop()].}
+\item{source}{Optional source bundle from [get_ready_pop()] or source
+cohort id(s) as character vector.}
+
+\item{source_ids}{Optional explicit source cohort id vector. When provided,
+this overrides ids inferred from `source`.}
 
 \item{ready_in_years}{Delay until cohort availability.}
 
@@ -34,6 +41,10 @@ put_stage_pop(
 \item{active}{Whether the new cohort is active.}
 
 \item{inherit_genotypes}{Whether to inherit genotype availability from source.}
+
+\item{selection_strategy}{Optional human-readable selection mechanism text.}
+
+\item{cross_strategy}{Optional human-readable crossing mechanism text.}
 }
 \value{
 Updated program state.

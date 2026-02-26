@@ -52,6 +52,8 @@ run_recurrent_gs_tick <- function(state, cfg) {
     pop = next_pop,
     stage = cfg$rc_stage,
     source = src,
+    selection_strategy = "Top by EBV from latest RC cohort",
+    cross_strategy = "Random mating without selfing among selected RC parents",
     ready_in_years = cfg$rapid_cycle_length,
     stream = "main",
     inherit_genotypes = FALSE
@@ -84,6 +86,7 @@ run_start_rc_if_ready <- function(state, cfg) {
     pop = rc0,
     stage = cfg$rc_stage,
     source = src,
+    selection_strategy = "Random sample from latest PYT to initialize RC",
     ready_in_years = 0,
     stream = "main",
     inherit_genotypes = TRUE
@@ -121,6 +124,8 @@ run_send_rc_to_dh <- function(state, cfg) {
     pop = dh_send,
     stage = cfg$dh_stage,
     source = src,
+    selection_strategy = if (is.null(model)) "Random selection from RC" else "Top by EBV from RC",
+    cross_strategy = "makeDH(nDH=1) per selected line",
     ready_in_years = 2,
     stream = "main",
     inherit_genotypes = FALSE
@@ -144,6 +149,7 @@ run_pyt <- function(state, cfg) {
     output_stage = "PYT",
     stream = "main",
     input_policy = "latest_one",
+    selection_strategy = "Random subset from latest DH_PIPE",
     select_entries_fn = sel_fn,
     n_pyt = cfg$n_pyt,
     traits = 1,
@@ -211,6 +217,7 @@ run_ayt <- function(state, cfg) {
     output_stage = "AYT",
     stream = "main",
     input_policy = "latest_one",
+    selection_strategy = "Top by EBV from latest PYT (fallback: phenotype)",
     select_entries_fn = sel_fn,
     model_id = cfg$model_id,
     n_ayt = cfg$n_ayt,
@@ -251,6 +258,7 @@ run_eyt <- function(state, cfg) {
     output_stage = "EYT",
     stream = "main",
     input_policy = "latest_one",
+    selection_strategy = "Top by phenotype from latest AYT",
     select_entries_fn = sel_fn,
     n_eyt = cfg$n_eyt,
     traits = 1,
@@ -285,6 +293,7 @@ run_release_variety <- function(state, cfg) {
     pop = variety,
     stage = "Variety",
     source = src,
+    selection_strategy = "Top by phenotype from latest EYT",
     ready_in_years = 0,
     stream = "main",
     inherit_genotypes = TRUE
@@ -420,7 +429,15 @@ bootstrap_with_pyt_seed <- function(state, SP, parents0, cfg) {
   if (pop_n_ind(dh_0) > cfg$n_pyt) dh_0 <- pop_subset(dh_0, sample.int(pop_n_ind(dh_0), size = cfg$n_pyt, replace = FALSE))
 
   pyt_0 <- setPheno(dh_0, varE = cfg$varE, reps = 1, traits = 1, simParam = SP)
-  state <- put_stage_pop(state, pyt_0, stage = "PYT", source = NULL, ready_in_years = 1, stream = "main")
+  state <- put_stage_pop(
+    state,
+    pyt_0,
+    stage = "PYT",
+    source = NULL,
+    selection_strategy = "Bootstrap PYT from initial DH seed",
+    ready_in_years = 1,
+    stream = "main"
+  )
 
   run_genotyping(state, list(
     input_stage = "PYT",
@@ -447,7 +464,7 @@ run_gstp_loop_demo_structured <- function(n_years = 14L, make_plots = FALSE) {
 
 
 # Reporting ----------------------------------------------------------------
-print_gstp_summary <- function(state) {
+print_gstp_summary <- function(state, show_event_timeline = FALSE) {
   ticks_per_year <- as.integer(round(1 / state$time$dt))
   metrics <- bp_extract_cohort_metrics(
     state = state,
@@ -469,6 +486,11 @@ print_gstp_summary <- function(state) {
     "cohort_id", "stage", "origin_cohort_id", "origin_year", "available_year",
     "mean_gv", "var_gv", "max_gv", "cor_ebv_gv", "h2", "H2"
   )])
+
+  if (isTRUE(show_event_timeline)) {
+    cat("\nEvent timeline:\n")
+    bp_print_event_timeline(state, collapse_year_patterns = TRUE, digits = 2)
+  }
 }
 
 

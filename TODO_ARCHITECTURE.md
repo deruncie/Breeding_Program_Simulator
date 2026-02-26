@@ -60,6 +60,9 @@
 - [ ] Keep append-only logs (`phenotype_log`, `genotype_log`, `cost_log`) as source of truth.
 - [ ] Add cost presets/tiers (e.g., genotyping and PYT high relative cost) to config template.
 - [ ] Add summary helper(s) for cost breakdown by event/stage/time.
+- [ ] Revisit standalone `run_predict_ebv` event logging:
+  - for now, infer model usage from downstream selection events (`use = "ebv"` with model context),
+  - later decide whether to add explicit prediction events from non-state-mutating prediction calls.
 
 ## User-Facing Layer
 - [ ] Ensure high-level scheme scripts stay readable and explicit (stage-by-stage calls).

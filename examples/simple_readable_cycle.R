@@ -63,6 +63,8 @@ cfg <- list(
   ),
   genotype = list(
     input_stage = "PYT",
+    input_policy = "latest_one",
+    include_not_ready = TRUE,
     chip = 1L,
     duration_years = 1,
     cost_per_sample = 25
@@ -125,3 +127,6 @@ print(state$outputs$varieties)
 
 cat("\nCost by event:\n")
 print(stats::aggregate(total_cost ~ event, data = state$cost_log, sum))
+
+cat("\nEvent timeline:\n")
+bp_print_event_timeline(state, collapse_year_patterns = TRUE, digits = 2)

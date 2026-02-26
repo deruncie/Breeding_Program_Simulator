@@ -53,6 +53,40 @@ run_crossing_stage <- function(state, cfg) {
       duration_years = cfg$duration_years %||% 1
     )
     new_cohort_id <- bp_last_cohort_id(state)
+    yr_now <- bp_format_year(bp_tick_to_year(state, state$time$tick))
+    yr_av <- bp_format_year(bp_tick_to_year(state, state$cohorts$available_tick[match(new_cohort_id, state$cohorts$cohort_id)]))
+    src_label <- bp_source_labels(state, src$cohort_id, use = "created")
+    cross_desc <- as.character(cfg$cross_strategy %||% cfg$cross_plan_desc %||% "cross_plan_fn/random cross plan")
+    state <- bp_log_event(
+      state = state,
+      fn = "run_crossing_stage",
+      event_type = "crossing",
+      stage = cfg$output_stage %||% "F1",
+      source_ids = src$cohort_id,
+      output_id = new_cohort_id,
+      event_string = sprintf(
+        "Year %s: Created %s by crossing %s with %s (n_crosses=%d, progeny_per_cross=%d). Will be available Year %s.",
+        yr_now,
+        as.character(cfg$output_stage %||% "F1"),
+        src_label,
+        cross_desc,
+        as.integer(n_crosses),
+        as.integer(n_progeny),
+        yr_av
+      ),
+      template_string = sprintf(
+        "Cross to %s from %s (n_crosses=%d, n_prog=%d)",
+        as.character(cfg$output_stage %||% "F1"),
+        as.character(src$stage),
+        as.integer(n_crosses),
+        as.integer(n_progeny)
+      ),
+      details = list(
+        n_crosses = as.integer(n_crosses),
+        n_progeny_per_cross = as.integer(n_progeny),
+        cross_strategy = cross_desc
+      )
+    )
 
     state <- bp_add_cost(
       state,
@@ -114,6 +148,37 @@ run_selfing_stage <- function(state, cfg) {
       duration_years = cfg$duration_years %||% 2
     )
     new_cohort_id <- bp_last_cohort_id(state)
+    yr_now <- bp_format_year(bp_tick_to_year(state, state$time$tick))
+    yr_av <- bp_format_year(bp_tick_to_year(state, state$cohorts$available_tick[match(new_cohort_id, state$cohorts$cohort_id)]))
+    src_label <- bp_source_labels(state, src$cohort_id, use = "created")
+    prog_txt <- paste(prog, collapse = ",")
+    state <- bp_log_event(
+      state = state,
+      fn = "run_selfing_stage",
+      event_type = "selfing",
+      stage = cfg$output_stage %||% "F5",
+      source_ids = src$cohort_id,
+      output_id = new_cohort_id,
+      event_string = sprintf(
+        "Year %s: Advanced %s via selfing/SSD to %s (%d generations, progeny schedule=%s). Will be available Year %s.",
+        yr_now,
+        src_label,
+        as.character(cfg$output_stage %||% "F5"),
+        as.integer(n_gen),
+        prog_txt,
+        yr_av
+      ),
+      template_string = sprintf(
+        "Selfing to %s from %s (%d generations)",
+        as.character(cfg$output_stage %||% "F5"),
+        as.character(src$stage),
+        as.integer(n_gen)
+      ),
+      details = list(
+        n_generations = as.integer(n_gen),
+        n_progeny_schedule = prog
+      )
+    )
 
     state <- bp_add_cost(
       state,

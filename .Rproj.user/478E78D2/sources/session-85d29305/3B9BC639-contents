@@ -18,15 +18,34 @@ bp_init_state <- function(SP, dt = 0.25, start_time = 0, sim = list()) {
     sim = utils::modifyList(list(SP = SP, default_chip = 1L), sim),
     pops = list(),
     cohorts = bp_empty_cohorts(),
+    event_log = bp_empty_event_log(),
     phenotype_log = bp_empty_phenotype_log(),
     genotype_log = bp_empty_genotype_log(),
     gs_models = list(),
     cost_log = bp_empty_cost_log(),
     outputs = list(varieties = bp_empty_variety_log()),
-    counters = list(cohort = 0L, model = 0L)
+    counters = list(cohort = 0L, model = 0L, event = 0L)
   )
   class(state) <- "bp_state"
   state
+}
+
+# Event log table (append-only).
+bp_empty_event_log <- function() {
+  data.frame(
+    event_id = integer(),
+    tick = integer(),
+    year = numeric(),
+    fn = character(),
+    event_type = character(),
+    stage = character(),
+    source_ids = character(),
+    output_id = character(),
+    event_string = character(),
+    template_string = character(),
+    details = I(vector("list", 0L)),
+    stringsAsFactors = FALSE
+  )
 }
 
 #' Conditional Debug Breakpoint
@@ -107,6 +126,8 @@ bp_empty_cohorts <- function() {
     stream = character(),
     cycle_id = character(),
     source_cohort_id = character(),
+    selection_strategy = character(),
+    cross_strategy = character(),
     created_tick = integer(),
     done_tick = integer(),
     available_tick = integer(),
@@ -225,6 +246,53 @@ chip_index <- function(state, chip) {
   stop("chip must be numeric, numeric string, or present in state$sim$chip_map", call. = FALSE)
 }
 
+# Convert tick to decimal year where tick 0 is Year 1.0.
+bp_tick_to_year <- function(state, tick) {
+  1 + as.numeric(tick) * as.numeric(state$time$dt)
+}
+
+# Format decimal year for human-readable output.
+bp_format_year <- function(x, digits = 2L) {
+  formatC(as.numeric(x), format = "f", digits = as.integer(digits))
+}
+
+# Parse semicolon-delimited source ids into unique vector.
+bp_parse_source_ids <- function(x) {
+  if (is.null(x) || length(x) == 0L) return(character(0))
+  ch <- as.character(x)
+  ch <- ch[!is.na(ch) & nzchar(ch) & ch != "NA"]
+  if (length(ch) == 0L) return(character(0))
+  out <- unique(unlist(strsplit(ch, ";", fixed = TRUE), use.names = FALSE))
+  out[!is.na(out) & nzchar(out) & out != "NA"]
+}
+
+#' Build Cohort Label
+#'
+#' Return a readable cohort label such as `PYT:Year3.00`.
+#'
+#' @param state Program state.
+#' @param cohort_id Cohort id.
+#' @param use Whether to use cohort `created` or `available` time.
+#' @param digits Number of decimal places in the year label.
+#'
+#' @return Character scalar label.
+#' @export
+bp_cohort_label <- function(state, cohort_id, use = c("created", "available"), digits = 2L) {
+  use <- match.arg(use)
+  idx <- match(as.character(cohort_id), state$cohorts$cohort_id)
+  if (is.na(idx)) return(as.character(cohort_id))
+  tick <- if (use == "created") state$cohorts$created_tick[[idx]] else state$cohorts$available_tick[[idx]]
+  stage <- as.character(state$cohorts$stage[[idx]])
+  paste0(stage, ":Year", bp_format_year(bp_tick_to_year(state, tick), digits = digits))
+}
+
+# Build joined labels for one or more source cohorts.
+bp_source_labels <- function(state, source_ids, use = "created", digits = 2L) {
+  ids <- bp_parse_source_ids(source_ids)
+  if (length(ids) == 0L) return("none")
+  paste(vapply(ids, function(cid) bp_cohort_label(state, cid, use = use, digits = digits), character(1)), collapse = ", ")
+}
+
 # Append one cost row.
 bp_add_cost <- function(state, stage, cohort_id, event, unit, n_units, unit_cost) {
   row <- data.frame(
@@ -242,6 +310,202 @@ bp_add_cost <- function(state, stage, cohort_id, event, unit, n_units, unit_cost
   state
 }
 
+#' Log Event
+#'
+#' Append one row to `state$event_log`.
+#'
+#' @param state Program state.
+#' @param fn Function name that emitted this event.
+#' @param event_type Event type tag.
+#' @param stage Stage label.
+#' @param source_ids Source cohort id(s).
+#' @param output_id Output id (cohort id or model id).
+#' @param event_string Human-readable event text.
+#' @param template_string Normalized template text used for pattern matching.
+#' @param details Optional named list of extra details.
+#'
+#' @return Updated program state.
+#' @export
+bp_log_event <- function(
+  state,
+  fn,
+  event_type,
+  stage = "",
+  source_ids = character(0),
+  output_id = NA_character_,
+  event_string,
+  template_string = NULL,
+  details = list()
+) {
+  if (is.null(state$event_log)) {
+    state$event_log <- bp_empty_event_log()
+  }
+  if (is.null(state$counters$event)) {
+    state$counters$event <- 0L
+  }
+
+  state$counters$event <- state$counters$event + 1L
+  tick <- as.integer(state$time$tick)
+  yr <- bp_tick_to_year(state, tick)
+  ids <- bp_parse_source_ids(source_ids)
+  src_txt <- if (length(ids) == 0L) "" else paste(ids, collapse = ";")
+  tpl <- as.character(template_string %||% event_string)
+
+  row <- data.frame(
+    event_id = as.integer(state$counters$event),
+    tick = tick,
+    year = as.numeric(yr),
+    fn = as.character(fn),
+    event_type = as.character(event_type),
+    stage = as.character(stage %||% ""),
+    source_ids = as.character(src_txt),
+    output_id = as.character(output_id %||% NA_character_),
+    event_string = as.character(event_string),
+    template_string = as.character(tpl),
+    details = I(list(details)),
+    stringsAsFactors = FALSE
+  )
+  state$event_log <- rbind(state$event_log, row)
+  state
+}
+
+#' Build Event Timeline Data Frame
+#'
+#' @param state Program state.
+#' @param digits Number of decimal places for year labels.
+#'
+#' @return Event log with derived timeline columns.
+#' @export
+bp_event_timeline_df <- function(state, digits = 2L) {
+  ev <- state$event_log
+  if (is.null(ev) || nrow(ev) == 0L) return(ev)
+  ev <- ev[order(ev$tick, ev$event_id), , drop = FALSE]
+  ev$year_label <- paste0("Year ", bp_format_year(ev$year, digits = digits))
+  ev$year_int <- as.integer(floor(ev$year))
+  ev$within_year <- round(ev$year - ev$year_int, digits = digits)
+  ev
+}
+
+#' Print Event Timeline
+#'
+#' Print a readable event timeline grouped by time, with optional collapse of
+#' repeated year-level patterns.
+#'
+#' @param state Program state.
+#' @param collapse_year_patterns Whether to collapse consecutive years with the
+#'   same event pattern.
+#' @param digits Number of decimal places for printed years.
+#' @param md_file Optional path to save the rendered timeline as a markdown
+#'   text file.
+#'
+#' @return Invisibly returns `state`.
+#' @export
+bp_print_event_timeline <- function(state, collapse_year_patterns = TRUE, digits = 2L, md_file = NULL) {
+  ev <- bp_event_timeline_df(state, digits = digits)
+  if (is.null(ev) || nrow(ev) == 0L) {
+    msg <- "No events logged."
+    cat(msg, "\n", sep = "")
+    if (!is.null(md_file)) writeLines(msg, con = md_file, useBytes = TRUE)
+    return(invisible(state))
+  }
+
+  fmt_sentences <- function(msg) {
+    txt <- trimws(as.character(msg))
+    txt <- sub("^Year[[:space:]]+[0-9]+(?:\\.[0-9]+)?:[[:space:]]*", "", txt, perl = TRUE)
+    if (!nzchar(txt)) return(character(0))
+
+    parts <- trimws(unlist(strsplit(txt, "\\.\\s+", perl = TRUE), use.names = FALSE))
+    parts <- parts[nzchar(parts)]
+    if (length(parts) == 0L) return(character(0))
+    parts <- vapply(parts, function(x) {
+      if (grepl("[.!?]$", x)) x else paste0(x, ".")
+    }, character(1))
+    parts
+  }
+
+  cat_wrapped <- function(prefix, text, cont_prefix) {
+    w <- getOption("width", 100L)
+    lines <- strwrap(text, width = max(40L, as.integer(w) - nchar(prefix)))
+    if (length(lines) == 0L) return(invisible(NULL))
+    cat(prefix, lines[[1L]], "\n", sep = "")
+    if (length(lines) > 1L) {
+      for (j in 2:length(lines)) cat(cont_prefix, lines[[j]], "\n", sep = "")
+    }
+    invisible(NULL)
+  }
+
+  print_year_detail <- function(df_year) {
+    splits <- split(df_year, df_year$year_label)
+    ord <- names(splits)[order(vapply(splits, function(x) x$tick[[1]], integer(1)))]
+    first_block <- TRUE
+    for (lbl in ord) {
+      if (!first_block) cat("\n")
+      cat(lbl, "\n", sep = "")
+      d <- splits[[lbl]]
+      for (i in seq_len(nrow(d))) {
+        parts <- fmt_sentences(d$event_string[[i]])
+        if (length(parts) == 0L) next
+        cat_wrapped("- ", parts[[1L]], "  ")
+        if (length(parts) > 1L) {
+          for (k in 2:length(parts)) {
+            cat_wrapped("  - ", parts[[k]], "    ")
+          }
+        }
+      }
+      first_block <- FALSE
+    }
+  }
+
+  by_year <- split(ev, ev$year_int)
+  years <- as.integer(names(by_year))
+  years <- years[order(years)]
+
+  render_timeline <- function() {
+    if (!isTRUE(collapse_year_patterns) || length(years) <= 1L) {
+      first_year <- TRUE
+      for (yy in years) {
+        if (!first_year) cat("\n")
+        print_year_detail(by_year[[as.character(yy)]])
+        first_year <- FALSE
+      }
+      return(invisible(NULL))
+    }
+
+    sig <- vapply(years, function(yy) {
+      d <- by_year[[as.character(yy)]]
+      paste(sprintf("%s|%s", d$within_year, d$template_string), collapse = " || ")
+    }, character(1))
+
+    run_start <- 1L
+    first_year <- TRUE
+    while (run_start <= length(years)) {
+      run_end <- run_start
+      while (run_end < length(years) && identical(sig[[run_end + 1L]], sig[[run_start]])) {
+        run_end <- run_end + 1L
+      }
+
+      y0 <- years[[run_start]]
+      if (!first_year) cat("\n")
+      print_year_detail(by_year[[as.character(y0)]])
+      if (run_end > run_start) {
+        y1 <- years[[run_end]]
+        cat(sprintf("Year %d-%d (same as Year %d)\n", y0, y1, y0))
+      }
+      run_start <- run_end + 1L
+      first_year <- FALSE
+    }
+    invisible(NULL)
+  }
+
+  txt <- utils::capture.output(render_timeline(), type = "output")
+  cat(paste(txt, collapse = "\n"), "\n", sep = "")
+  if (!is.null(md_file)) {
+    writeLines(txt, con = md_file, useBytes = TRUE)
+  }
+
+  invisible(state)
+}
+
 # Add a new cohort row and store its pop.
 bp_add_cohort <- function(
   state,
@@ -250,6 +514,8 @@ bp_add_cohort <- function(
   stream = "main",
   cycle_id = "cycle_1",
   source_cohort_id = NA_character_,
+  selection_strategy = NA_character_,
+  cross_strategy = NA_character_,
   duration_years = 0,
   active = TRUE
 ) {
@@ -265,6 +531,8 @@ bp_add_cohort <- function(
     stream = as.character(stream),
     cycle_id = as.character(cycle_id),
     source_cohort_id = as.character(source_cohort_id),
+    selection_strategy = as.character(selection_strategy),
+    cross_strategy = as.character(cross_strategy),
     created_tick = as.integer(state$time$tick),
     done_tick = done_tick,
     available_tick = done_tick,
@@ -497,12 +765,17 @@ get_ready_pop <- function(
 #' @param state Program state.
 #' @param pop Output pop.
 #' @param stage Output stage.
-#' @param source Optional source bundle from [get_ready_pop()].
+#' @param source Optional source bundle from [get_ready_pop()] or source
+#'   cohort id(s) as character vector.
+#' @param source_ids Optional explicit source cohort id vector. When provided,
+#'   this overrides ids inferred from `source`.
 #' @param ready_in_years Delay until cohort availability.
 #' @param stream Optional output stream override.
 #' @param cycle_id Optional output cycle id override.
 #' @param active Whether the new cohort is active.
 #' @param inherit_genotypes Whether to inherit genotype availability from source.
+#' @param selection_strategy Optional human-readable selection mechanism text.
+#' @param cross_strategy Optional human-readable crossing mechanism text.
 #'
 #' @return Updated program state.
 #' @export
@@ -511,15 +784,30 @@ put_stage_pop <- function(
   pop,
   stage,
   source = NULL,
+  source_ids = NULL,
   ready_in_years = 0,
   stream = NULL,
   cycle_id = NULL,
   active = TRUE,
-  inherit_genotypes = FALSE
+  inherit_genotypes = FALSE,
+  selection_strategy = NA_character_,
+  cross_strategy = NA_character_
 ) {
-  src_ids <- if (is.null(source)) NA_character_ else paste(source$source_ids, collapse = ";")
-  stream_val <- if (!is.null(stream)) stream else if (!is.null(source)) source$stream else "main"
-  cycle_val <- if (!is.null(cycle_id)) cycle_id else if (!is.null(source)) source$cycle_id else "cycle_1"
+  source_is_bundle <- is.list(source) && !is.null(source$source_ids)
+  source_id_vec <- if (!is.null(source_ids)) {
+    as.character(source_ids)
+  } else if (source_is_bundle) {
+    as.character(source$source_ids)
+  } else if (is.character(source)) {
+    as.character(source)
+  } else {
+    character(0)
+  }
+  source_id_vec <- unique(source_id_vec[!is.na(source_id_vec) & nzchar(source_id_vec) & source_id_vec != "NA"])
+
+  src_ids <- if (length(source_id_vec) == 0L) NA_character_ else paste(source_id_vec, collapse = ";")
+  stream_val <- if (!is.null(stream)) stream else if (source_is_bundle && !is.null(source$stream)) source$stream else "main"
+  cycle_val <- if (!is.null(cycle_id)) cycle_id else if (source_is_bundle && !is.null(source$cycle_id)) source$cycle_id else "cycle_1"
 
   state <- bp_add_cohort(
     state = state,
@@ -528,15 +816,56 @@ put_stage_pop <- function(
     stream = stream_val,
     cycle_id = cycle_val,
     source_cohort_id = src_ids,
+    selection_strategy = selection_strategy,
+    cross_strategy = cross_strategy,
     duration_years = ready_in_years,
     active = active
   )
+  new_cohort_id <- bp_last_cohort_id(state)
+  avail_tick <- state$cohorts$available_tick[match(new_cohort_id, state$cohorts$cohort_id)]
+  yr_now <- bp_format_year(bp_tick_to_year(state, state$time$tick))
+  yr_av <- bp_format_year(bp_tick_to_year(state, avail_tick))
+  src_lbl <- bp_source_labels(state, source_id_vec, use = "created")
+  ss_txt <- as.character(selection_strategy %||% NA_character_)
+  cs_txt <- as.character(cross_strategy %||% NA_character_)
+  extra <- c(
+    if (!is.na(ss_txt) && nzchar(ss_txt)) paste0("Selection=", ss_txt) else NULL,
+    if (!is.na(cs_txt) && nzchar(cs_txt)) paste0("Crossing=", cs_txt) else NULL
+  )
+  suffix <- if (length(extra) > 0L) paste0(" ", paste(extra, collapse = "; "), ".") else ""
+  evt <- sprintf(
+    "Year %s: Created %s from %s. Will be available Year %s.%s",
+    yr_now, stage, src_lbl, yr_av, suffix
+  )
+  tpl <- sprintf(
+    "Create %s from source_stage=%s",
+    stage,
+    paste(unique(vapply(source_id_vec, function(cid) {
+      idx <- match(cid, state$cohorts$cohort_id)
+      if (is.na(idx)) "unknown" else as.character(state$cohorts$stage[[idx]])
+    }, character(1))), collapse = "+")
+  )
+  state <- bp_log_event(
+    state = state,
+    fn = "put_stage_pop",
+    event_type = "stage_output",
+    stage = stage,
+    source_ids = source_id_vec,
+    output_id = new_cohort_id,
+    event_string = evt,
+    template_string = tpl,
+    details = list(
+      ready_in_years = as.numeric(ready_in_years),
+      selection_strategy = selection_strategy,
+      cross_strategy = cross_strategy
+    )
+  )
 
-  if (isTRUE(inherit_genotypes) && !is.null(source) && !is.null(source$source_ids)) {
+  if (isTRUE(inherit_genotypes) && length(source_id_vec) > 0L) {
     state <- bp_inherit_genotypes_from_source(
       state = state,
-      new_cohort_id = bp_last_cohort_id(state),
-      source_ids = source$source_ids
+      new_cohort_id = new_cohort_id,
+      source_ids = source_id_vec
     )
   }
   state
@@ -942,6 +1271,54 @@ run_phenotype_trial <- function(state, cfg) {
 
     avail_tick <- state$cohorts$available_tick[match(new_cohort_id, state$cohorts$cohort_id)]
     stage_name <- cfg$output_stage %||% cfg$trial_name
+    n_selected <- pop_n_ind(pop_trial)
+    sel_desc <- as.character(cfg$selection_strategy %||% if (is.function(cfg$select_entries_fn)) "select_entries_fn" else "all entries")
+    src_label <- bp_source_labels(state, src$cohort_id, use = "created")
+    yr_now <- bp_format_year(bp_tick_to_year(state, state$time$tick))
+    yr_av <- bp_format_year(bp_tick_to_year(state, avail_tick))
+    trait_txt <- paste(traits, collapse = ",")
+    event_txt <- sprintf(
+      "Year %s: Started a %s trial by selecting n=%d from %s by %s. The trial has %d locations with %d rep per location and takes %.2f years to complete and measures traits %s. Will be available Year %s.",
+      yr_now,
+      stage_name,
+      n_selected,
+      src_label,
+      sel_desc,
+      n_loc,
+      reps,
+      as.numeric(cfg$duration_years %||% 1),
+      trait_txt,
+      yr_av
+    )
+    tpl_txt <- sprintf(
+      "Phenotype %s from %s by %s (%d loc x %d rep, traits %s, dur %.2f)",
+      stage_name,
+      as.character(src$stage),
+      sel_desc,
+      n_loc,
+      reps,
+      trait_txt,
+      as.numeric(cfg$duration_years %||% 1)
+    )
+    state <- bp_log_event(
+      state = state,
+      fn = "run_phenotype_trial",
+      event_type = "phenotyping",
+      stage = stage_name,
+      source_ids = src$cohort_id,
+      output_id = new_cohort_id,
+      event_string = event_txt,
+      template_string = tpl_txt,
+      details = list(
+        selection_strategy = sel_desc,
+        traits = traits,
+        n_loc = n_loc,
+        reps = reps,
+        varE = as.numeric(cfg$varE),
+        duration_years = as.numeric(cfg$duration_years %||% 1),
+        n_selected = n_selected
+      )
+    )
 
     if (isTRUE(use_env_control) && isTRUE(cfg$log_per_environment %||% TRUE)) {
       for (e in seq_len(n_loc)) {
@@ -1055,6 +1432,30 @@ run_genotyping <- function(state, cfg) {
       stringsAsFactors = FALSE
     )
     state$genotype_log <- rbind(state$genotype_log, row)
+
+    yr_now <- bp_format_year(bp_tick_to_year(state, state$time$tick))
+    yr_av <- bp_format_year(bp_tick_to_year(state, row$available_tick[[1]]))
+    src_label <- bp_source_labels(state, src$cohort_id, use = "created")
+    evt <- sprintf(
+      "Year %s: Genotyped %s population using snpChip=%s (n=%d). Will be available Year %s.",
+      yr_now, src_label, ckey, as.integer(n_ind), yr_av
+    )
+    tpl <- sprintf("Genotype stage=%s chip=%s", as.character(src$stage), ckey)
+    state <- bp_log_event(
+      state = state,
+      fn = "run_genotyping",
+      event_type = "genotyping",
+      stage = as.character(src$stage),
+      source_ids = src$cohort_id,
+      output_id = src$cohort_id,
+      event_string = evt,
+      template_string = tpl,
+      details = list(
+        chip = ckey,
+        n_ind = as.integer(n_ind),
+        duration_years = as.numeric(cfg$duration_years %||% 1)
+      )
+    )
 
     state <- bp_add_cost(
       state,
@@ -1346,11 +1747,50 @@ run_train_gp_model <- function(state, cfg) {
 
   state$gs_models[[model_id]] <- list(
     model = model,
+    model_id = model_id,
+    model_name = as.character(cfg$model_name %||% if (is.function(cfg$train_model_fn)) "custom_train_model_fn" else "AlphaSimR::RRBLUP"),
     predict_ebv_fn = cfg$predict_ebv_fn %||% NULL,
     trained_tick = as.integer(state$time$tick),
     chip = ckey,
     trait = trait,
     source_cohorts = train_cohorts$cohort_id
+  )
+
+  yr_now <- bp_format_year(bp_tick_to_year(state, state$time$tick))
+  src_label <- bp_source_labels(state, train_cohorts$cohort_id, use = "created")
+  n_total <- pop_n_ind(train_pop)
+  evt <- sprintf(
+    "Year %s: Trained GS model %s on %s (n_total=%d, trait=%d, chip=%s).",
+    yr_now,
+    state$gs_models[[model_id]]$model_name,
+    src_label,
+    as.integer(n_total),
+    as.integer(trait),
+    ckey
+  )
+  tpl <- sprintf(
+    "Train model=%s from stage=%s (trait=%d, chip=%s)",
+    state$gs_models[[model_id]]$model_name,
+    as.character(cfg$from_stage %||% "unknown"),
+    as.integer(trait),
+    ckey
+  )
+  state <- bp_log_event(
+    state = state,
+    fn = "run_train_gp_model",
+    event_type = "train_model",
+    stage = as.character(cfg$from_stage %||% "unknown"),
+    source_ids = train_cohorts$cohort_id,
+    output_id = model_id,
+    event_string = evt,
+    template_string = tpl,
+    details = list(
+      model_id = model_id,
+      model_name = state$gs_models[[model_id]]$model_name,
+      n_total = as.integer(n_total),
+      trait = as.integer(trait),
+      chip = ckey
+    )
   )
 
   state

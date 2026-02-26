@@ -346,6 +346,8 @@ test_that("run_phenotype_trial respects log_per_environment and log_aggregate", 
     nrow(state2$phenotype_log),
     BreedingProgramSimulator:::pop_n_ind(state2$pops[[state2$cohorts$cohort_id[2]]])
   )
+
+  expect_true(any(state2$event_log$event_type == "phenotyping"))
 })
 
 test_that("subset copies can inherit genotype log and skip re-genotyping costs", {
@@ -441,4 +443,31 @@ test_that("cross-derived cohorts do not inherit genotype log by default", {
     list(input_stage = "CROSS", chip = 1L, duration_years = 0, cost_per_sample = 2)
   )
   expect_equal(nrow(state$cost_log), n_cost_before + 1L)
+})
+
+test_that("put_stage_pop accepts source_ids and strategy text", {
+  state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = data.frame(v = 1:5),
+    stage = "PYT",
+    duration_years = 0
+  )
+  src_id <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+
+  state <- BreedingProgramSimulator:::put_stage_pop(
+    state = state,
+    pop = data.frame(v = 1:3),
+    stage = "CROSS_BLOCK",
+    source_ids = src_id,
+    selection_strategy = "Top 3 by ebv",
+    cross_strategy = "random mating",
+    ready_in_years = 1
+  )
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  idx <- match(cid, state$cohorts$cohort_id)
+  expect_equal(state$cohorts$source_cohort_id[idx], src_id)
+  expect_equal(state$cohorts$selection_strategy[idx], "Top 3 by ebv")
+  expect_equal(state$cohorts$cross_strategy[idx], "random mating")
+  expect_true(any(state$event_log$output_id == cid & state$event_log$event_type == "stage_output"))
 })
