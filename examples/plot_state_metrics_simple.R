@@ -9,17 +9,19 @@
   m <- bp_collect_metrics(state)
   bp_plot_mean_gv_origin(m)
   bp_plot_mean_gv_available(m)
-  bp_plot_metric_available(m, metric = "mean_gv")
-  bp_plot_metric_origin(m, metric = "mean_gv")
+  bp_plot_metric_available(m, metric = "cor_ebv_gv")
+  bp_plot_metric_available(m, metric = "var_gv")
+  bp_plot_metric_available(m, metric = "h2")
+  cfbp_plot_metric_origin(m, metric = "mean_gv")
 
 library(ggplot2)
 
 # Extract standard cohort metrics from a state object.
 bp_collect_metrics <- function(
   state,
-  stages = c("PD_DH_INPUT", "PYT", "AYT", "EYT", "Variety"),
+  stages = unique(state$event_log$stage),
   trait = 1L,
-  origin_stage = "PD_DH_INPUT",
+  origin_stage = "PYT",
   include_inactive = TRUE
 ) {
   ticks_per_year <- as.integer(round(1 / state$time$dt))

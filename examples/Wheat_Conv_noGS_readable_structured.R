@@ -21,7 +21,7 @@ library(AlphaSimR)
 
 source("R/operators.R")
 source("R/readable_api.R")
-source("R/readable_wrappers.R")
+source("R/state_print.R")
 source("R/monitoring.R")
 
 
@@ -596,7 +596,7 @@ make_wheat_conv_nogs_param_grid <- function() {
 }
 
 init_wheat_conv_nogs_sim <- function(cfg) {
-  founder_haps <- quickHaplo(nInd = 240, nChr = 3, segSites = 120)
+  founder_haps <- quickHaplo(nInd = 50, nChr = 3, segSites = 120)
   SP <- SimParam$new(founder_haps)
   SP$addTraitA(nQtlPerChr = 60)
 

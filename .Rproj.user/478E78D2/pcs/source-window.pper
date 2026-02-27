@@ -9,10 +9,17 @@
         },
         "wggl2dybxgvdk": {
             "ordinal": 4,
-            "x": 1690,
-            "y": -774,
-            "width": 1170,
-            "height": 590
+            "x": 1512,
+            "y": -795,
+            "width": 744,
+            "height": 814
+        },
+        "wetedcmmgiwh0": {
+            "ordinal": 5,
+            "x": 2443,
+            "y": -795,
+            "width": 744,
+            "height": 814
         }
     }
 }

@@ -11,7 +11,7 @@ library(AlphaSimR)
 
 source("R/operators.R")
 source("R/readable_api.R")
-source("R/readable_wrappers.R")
+source("R/state_print.R")
 source("R/monitoring.R")
 
 
@@ -323,13 +323,18 @@ run_pi_cycle <- function(state, cfg, cycle_label) {
   n_m <- pop_n_ind(mal)
   if (n_f == 0L || n_m == 0L) return(state)
 
-  male_idx_in_parent <- n_f + sample.int(n_m, size = n_f, replace = TRUE)
-  cross_plan <- cbind(seq_len(n_f), male_idx_in_parent)
+  # Open-pollination approximation:
+  # each selected female contributes seeds_per_cross pollinations, each with
+  # a randomly sampled selected male.
+  crosses_per_female <- as.integer(cfg$seeds_per_cross)
+  female_ids <- rep(seq_len(n_f), each = crosses_per_female)
+  male_ids <- n_f + sample.int(n_m, size = length(female_ids), replace = TRUE)
+  cross_plan <- cbind(female_ids, male_ids)
 
   halfsib_seed <- makeCross(
     parent_pop,
     crossPlan = cross_plan,
-    nProgeny = as.integer(cfg$seeds_per_cross),
+    nProgeny = 1L,
     simParam = state$sim$SP
   )
 
@@ -351,7 +356,10 @@ run_pi_cycle <- function(state, cfg, cycle_label) {
     ready_in_years = cfg$pi_cycle_duration_years,
     stream = "main",
     selection_strategy = sprintf("%s: split male/female then GS top-%d per sex", cycle_label, as.integer(cfg$n_female_select)),
-    cross_strategy = "Open-pollination approximation: one random selected male per selected female",
+    cross_strategy = sprintf(
+      "Open-pollination approximation: %d random male pollinations per selected female",
+      crosses_per_female
+    ),
     inherit_genotypes = FALSE
   )
   state <- add_stage_cost(
@@ -359,7 +367,7 @@ run_pi_cycle <- function(state, cfg, cycle_label) {
     stage = cfg$pi_candidate_stage,
     event = "pi_crossing",
     unit = "cross",
-    n = n_f,
+    n = nrow(cross_plan),
     unit_cost = cfg$cost_crossing
   )
 
@@ -763,7 +771,7 @@ make_two_part_cfg <- function() {
 
     # Trial heritability assumptions
     h2_headrow = 0.10,
-    h2_pyt = 0.20,
+    h2_pyt = 0.2,
     h2_ayt = 0.50,
     h2_eyt = 0.67,
 
@@ -877,7 +885,7 @@ if (identical(environment(), globalenv())) {
   sim <- init_two_part_from_wheat_conv(warm_years = 20L, cfg = cfg)
   out <- sim$state
   cfg <- sim$cfg
-  for (yr in seq_len(4L)) {
+  for (yr in seq_len(10L)) {
     out <- run_one_year(out, cfg, year_index = yr)
   }
   print_two_part_summary(out)

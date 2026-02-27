@@ -1240,10 +1240,11 @@ run_phenotype_trial <- function(state, cfg) {
         pop_trial@pheno[,] <- pheno_mean
       }
     } else {
+      reps_eff <- as.integer(max(1L, reps * n_loc))
       pop_trial <- AlphaSimR::setPheno(
         pop_trial,
         varE = cfg$varE,
-        reps = reps,
+        reps = reps_eff,
         traits = traits,
         simParam = state$sim$SP
       )

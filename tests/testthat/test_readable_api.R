@@ -350,6 +350,53 @@ test_that("run_phenotype_trial respects log_per_environment and log_aggregate", 
   expect_true(any(state2$event_log$event_type == "phenotyping"))
 })
 
+test_that("run_phenotype_trial uses effective reps = reps * n_loc when use_env_control is FALSE", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  set.seed(21)
+  h <- quickHaplo(10, 2, 50)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+
+  base_pop <- newPop(h, simParam = SP)
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  state <- BreedingProgramSimulator:::bp_add_cohort(
+    state = state,
+    pop = base_pop,
+    stage = "F5",
+    duration_years = 0
+  )
+
+  cfg <- list(
+    input_stage = "F5",
+    output_stage = "PYT",
+    traits = 1L,
+    n_loc = 4L,
+    reps = 2L,
+    varE = 1,
+    duration_years = 0,
+    use_env_control = FALSE,
+    consume_input = FALSE
+  )
+
+  set.seed(999)
+  state_out <- BreedingProgramSimulator:::run_phenotype_trial(state, cfg)
+  out_cid <- tail(state_out$cohorts$cohort_id, 1L)
+  pop_out <- state_out$pops[[out_cid]]
+
+  set.seed(999)
+  pop_ref <- AlphaSimR::setPheno(
+    base_pop,
+    varE = 1,
+    reps = 8L, # reps * n_loc
+    traits = 1L,
+    simParam = SP
+  )
+
+  expect_equal(as.numeric(pop_out@pheno), as.numeric(pop_ref@pheno))
+})
+
 test_that("subset copies can inherit genotype log and skip re-genotyping costs", {
   state <- BreedingProgramSimulator:::bp_init_state(
     SP = NULL,
