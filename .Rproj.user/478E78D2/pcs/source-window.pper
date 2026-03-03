@@ -2,24 +2,38 @@
     "sourceWindowGeometry": {
         "wjt4proq7z02n": {
             "ordinal": 3,
-            "x": 1710,
-            "y": -750,
-            "width": 850,
+            "x": 271,
+            "y": 121,
+            "width": 849,
             "height": 605
         },
         "wggl2dybxgvdk": {
             "ordinal": 4,
-            "x": 1512,
-            "y": -795,
-            "width": 744,
-            "height": 814
+            "x": 305,
+            "y": 33,
+            "width": 897,
+            "height": 573
         },
         "wetedcmmgiwh0": {
             "ordinal": 5,
-            "x": 2443,
-            "y": -795,
-            "width": 744,
-            "height": 814
+            "x": 0,
+            "y": 33,
+            "width": 1165,
+            "height": 733
+        },
+        "wsz0pmpet28nx": {
+            "ordinal": 6,
+            "x": 641,
+            "y": 62,
+            "width": 595,
+            "height": 625
+        },
+        "wqt68mterbt5n": {
+            "ordinal": 8,
+            "x": 208,
+            "y": 36,
+            "width": 925,
+            "height": 707
         }
     }
 }

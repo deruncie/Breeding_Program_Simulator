@@ -2,76 +2,38 @@
 % Please edit documentation in R/readable_api.R
 \name{run_predict_ebv}
 \alias{run_predict_ebv}
-\title{Predict EBV}
+\title{Predict EBV for Cohorts in State}
 \usage{
-run_predict_ebv(pop, model_entry, state, cfg, stage_label = "unknown")
+run_predict_ebv(state, cfg)
 }
 \arguments{
-\item{pop}{Target pop.}
-
-\item{model_entry}{Model entry from `state$gs_models`.}
-
 \item{state}{Program state.}
 
 \item{cfg}{Prediction configuration list.}
-
-\item{stage_label}{Stage label used in errors.}
 }
 \value{
-Pop with updated `@ebv`.
+Updated program state with scored populations persisted.
 }
 \description{
-Predict EBVs for a target pop using either a user function or AlphaSimR.
+Predict EBVs for one or more cohorts and persist them back into `state$pops`.
 }
-\details{
-If `predict_ebv_fn` is not provided, this function calls
-`AlphaSimR::setEBV(pop, solution = model_entry$model, simParam = state$sim$SP)`.
-For custom predictors, returned values are written directly into `pop@ebv`
-(single- or multi-trait).
-}
-\section{Key `cfg` fields}{
+\section{Required `cfg` fields}{
 
 \describe{
-  \item{`cohort_ids`}{Cohort id(s) used for genotype-chip validation. Required when `require_genotyped = TRUE`.}
+  \item{`model_id`}{Model id from `state$gs_models`. If omitted, latest model is used.}
+}
+}
+
+\section{Common optional `cfg` fields}{
+
+\describe{
+  \item{`cohort_ids`}{Explicit cohort id(s) to score.}
+  \item{`input_stage`}{Stage used when selecting cohorts via readiness/policy.}
+  \item{`stream`}{Optional stream filter.}
+  \item{`input_policy`}{Source selection policy when using `input_stage`.}
   \item{`chip`}{Optional chip override for validation/prediction compatibility.}
   \item{`require_genotyped`}{Whether to enforce genotype availability checks. Default `TRUE`.}
-  \item{`predict_ebv_fn`}{Optional custom predictor function. Signature:
-  `(target_pop, model_obj, state, cfg, model_entry)`. Must return numeric
-  vector (`nInd`) or numeric matrix (`nInd x nTraits`).}
+  \item{`predict_ebv_fn`}{Optional custom predictor function.}
 }
 }
 
-\examples{
-\donttest{
-if (requireNamespace("AlphaSimR", quietly = TRUE)) {
-  library(AlphaSimR)
-  h <- quickHaplo(16, 2, 40)
-  SP <- SimParam$new(h)
-  SP$addTraitA(10)
-  pop <- newPop(h, simParam = SP)
-
-  state <- bp_init_state(SP = SP, dt = 1)
-  state <- put_stage_pop(state, pop, stage = "TEST", ready_in_years = 0)
-  cid <- tail(state$cohorts$cohort_id, 1)
-
-  # Record that this cohort is genotyped on chip 1.
-  state <- run_genotyping(state, list(input_stage = "TEST", chip = 1L, duration_years = 0))
-
-  model_entry <- list(
-    model = list(dummy = TRUE),
-    chip = "1",
-    predict_ebv_fn = function(target_pop, model_obj, state, cfg, model_entry) {
-      seq_len(target_pop@nInd)
-    }
-  )
-  pop2 <- run_predict_ebv(
-    pop = pop,
-    model_entry = model_entry,
-    state = state,
-    cfg = list(cohort_ids = cid),
-    stage_label = "TEST"
-  )
-  dim(pop2@ebv)
-}
-}
-}

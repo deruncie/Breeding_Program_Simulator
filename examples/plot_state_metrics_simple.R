@@ -12,7 +12,7 @@
   bp_plot_metric_available(m, metric = "cor_ebv_gv")
   bp_plot_metric_available(m, metric = "var_gv")
   bp_plot_metric_available(m, metric = "h2")
-  cfbp_plot_metric_origin(m, metric = "mean_gv")
+  bp_plot_metric_origin(m, metric = "mean_gv")
 
 library(ggplot2)
 
@@ -21,7 +21,7 @@ bp_collect_metrics <- function(
   state,
   stages = unique(state$event_log$stage),
   trait = 1L,
-  origin_stage = "PYT",
+  origin_stage = "DH",
   include_inactive = TRUE
 ) {
   ticks_per_year <- as.integer(round(1 / state$time$dt))

@@ -203,46 +203,44 @@ split_halfsib_seed_indices <- function(n_total, n_families, seeds_per_family, n_
 }
 
 seed_pi_from_warm_state <- function(state, cfg) {
-  src_pyt <- get_ready_pop(
+  src_pyt <- select_latest_available(
     state = state,
     stage = "PYT",
     stream = "main",
-    policy = "latest_one",
     combine = TRUE,
     silent = TRUE
   )
 
-  src_cb <- get_ready_pop(
+  src_cb <- select_latest_available(
     state = state,
     stage = "CROSS_BLOCK",
     stream = "main",
-    policy = "latest_one",
     combine = TRUE,
     silent = TRUE
   )
 
-  src <- src_pyt
+  input_seed_source <- src_pyt
   if (!is.null(src_pyt) && !is.null(src_cb)) {
-    src <- src_pyt
-    src$pop <- merge_nonempty_pops(list(src_pyt$pop, src_cb$pop))
-    src$source_ids <- unique(c(src_pyt$source_ids, src_cb$source_ids))
+    input_seed_source <- src_pyt
+    input_seed_source$pop <- merge_nonempty_pops(list(src_pyt$pop, src_cb$pop))
+    input_seed_source$source_ids <- unique(c(src_pyt$source_ids, src_cb$source_ids))
   } else if (is.null(src_pyt) && !is.null(src_cb)) {
-    src <- src_cb
+    input_seed_source <- src_cb
   }
 
-  if (is.null(src) || is.null(src$pop)) {
+  if (is.null(input_seed_source) || is.null(input_seed_source$pop)) {
     stop("Could not find warm-start source cohorts (expected PYT and/or CROSS_BLOCK).", call. = FALSE)
   }
 
-  seed_n <- min(as.integer(cfg$pi_seed_n), pop_n_ind(src$pop))
-  idx <- sample.int(pop_n_ind(src$pop), size = seed_n, replace = FALSE)
-  pi_seed <- pop_subset(src$pop, idx)
+  seed_n <- min(as.integer(cfg$pi_seed_n), pop_n_ind(input_seed_source$pop))
+  idx <- sample.int(pop_n_ind(input_seed_source$pop), size = seed_n, replace = FALSE)
+  pi_seed <- pop_subset(input_seed_source$pop, idx)
 
   state <- put_stage_pop(
     state = state,
     pop = pi_seed,
     stage = cfg$pi_candidate_stage,
-    source = src,
+    source = input_seed_source,
     ready_in_years = 0,
     stream = "main",
     selection_strategy = sprintf("Warm-start random sample n=%d from PYT + CROSS_BLOCK", seed_n)
@@ -253,7 +251,7 @@ seed_pi_from_warm_state <- function(state, cfg) {
 
 
 # Event Verbs: Population Improvement -------------------------------------
-run_pi_cycle <- function(state, cfg, cycle_label) {
+select_from_PI_and_cross_next_PI_cycle <- function(state, cfg, cycle_label) {
   bp_debug_break(state, cfg)
 
   state <- run_genotyping(state, list(
@@ -267,17 +265,18 @@ run_pi_cycle <- function(state, cfg, cycle_label) {
     silent = TRUE
   ))
 
-  src <- get_ready_pop(
+  input_pi <- select_latest_available(
     state = state,
     stage = cfg$pi_candidate_stage,
     stream = "main",
-    policy = "latest_one",
     combine = TRUE,
     silent = TRUE
   )
-  if (is.null(src)) return(state)
+  chk <- bp_skip_if_no_input(state, input_pi, cfg)
+  if (chk$skip) return(chk$state)
+  state <- chk$state
 
-  pop <- src$pop
+  pop <- input_pi$pop
   n_total <- pop_n_ind(pop)
   if (n_total < 4L) return(state)
 
@@ -291,16 +290,16 @@ run_pi_cycle <- function(state, cfg, cycle_label) {
 
   model_entry <- state$gs_models[[cfg$model_id]]
   if (!is.null(model_entry)) {
-    pop <- run_predict_ebv(
+    pop <- predict_ebv_pop(
       pop = pop,
       model_entry = model_entry,
       state = state,
-      cfg = list(ebv_trait = as.integer(cfg$ebv_trait), cohort_ids = src$source_ids),
+      cfg = list(ebv_trait = as.integer(cfg$ebv_trait), cohort_ids = input_pi$source_ids),
       stage_label = "PI_CAND"
     )
     # Persist EBVs on the source cohort so monitoring can use cor_ebv_gv.
-    if (!is.null(src$source_rows) && nrow(src$source_rows) == 1L) {
-      state$pops[[as.character(src$source_rows$cohort_id[1])]] <- pop
+    if (!is.null(input_pi$source_rows) && nrow(input_pi$source_rows) == 1L) {
+      state$pops[[as.character(input_pi$source_rows$cohort_id[1])]] <- pop
     }
     pop_f_pool <- pop_subset(pop, idx_f_pool)
     pop_m_pool <- pop_subset(pop, idx_m_pool)
@@ -352,7 +351,7 @@ run_pi_cycle <- function(state, cfg, cycle_label) {
     state = state,
     pop = pi_next,
     stage = cfg$pi_candidate_stage,
-    source = src,
+    source = input_pi,
     ready_in_years = cfg$pi_cycle_duration_years,
     stream = "main",
     selection_strategy = sprintf("%s: split male/female then GS top-%d per sex", cycle_label, as.integer(cfg$n_female_select)),
@@ -375,23 +374,22 @@ run_pi_cycle <- function(state, cfg, cycle_label) {
     state = state,
     pop = dh_seed,
     stage = cfg$pd_dh_input_stage,
-    source = src,
+    source = input_pi,
     ready_in_years = cfg$pi_cycle_duration_years,
     stream = "main",
     selection_strategy = sprintf("%s: reserve %d seeds/family for DH", cycle_label, as.integer(cfg$seeds_to_dh_per_family)),
     inherit_genotypes = FALSE
   )
 
-  state <- close_sources(state, src)
   state
 }
 
 
 # Event Verbs: Product Development ----------------------------------------
-run_pd_make_dh <- function(state, cfg) {
+advance_PD_seed_to_DH <- function(state, cfg) {
   bp_debug_break(state, cfg)
 
-  src <- get_ready_pop(
+  input_pd_seed <- get_ready_pop(
     state = state,
     stage = cfg$pd_dh_input_stage,
     stream = "main",
@@ -399,9 +397,11 @@ run_pd_make_dh <- function(state, cfg) {
     combine = TRUE,
     silent = TRUE
   )
-  if (is.null(src)) return(state)
+  chk <- bp_skip_if_no_input(state, input_pd_seed, cfg)
+  if (chk$skip) return(chk$state)
+  state <- chk$state
 
-  seeds <- src$pop
+  seeds <- input_pd_seed$pop
   n_per_family <- as.integer(cfg$seeds_to_dh_per_family)
   n_families <- floor(pop_n_ind(seeds) / n_per_family)
   if (n_families < 1L) return(state)
@@ -419,7 +419,7 @@ run_pd_make_dh <- function(state, cfg) {
     state = state,
     pop = dh,
     stage = "DH_BULK",
-    source = src,
+    source = input_pd_seed,
     ready_in_years = cfg$dh_duration_years,
     stream = "main",
     cross_strategy = sprintf("makeDH(nDH=%d) from one representative seed/family", as.integer(cfg$dh_lines_per_family)),
@@ -434,160 +434,166 @@ run_pd_make_dh <- function(state, cfg) {
     unit_cost = cfg$cost_dh_line
   )
 
-  close_sources(state, src)
+  state
 }
 
-run_headrows <- function(state, cfg) {
+select_from_DH_and_run_headrow <- function(state, cfg) {
   bp_debug_break(state, cfg)
+  input_dh <- select_latest_available(state, stage = "DH_BULK", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_dh, cfg)
+  if (chk$skip) return(chk$state)
+  state <- chk$state
 
-  sel_head <- function(state, src, pop_in, cfg_local) {
-    n <- min(as.integer(cfg_local$n_headrow_advance), pop_n_ind(pop_in))
-    idx <- sample.int(pop_n_ind(pop_in), size = n, replace = FALSE)
-    idx
-  }
+  n <- min(as.integer(cfg$n_headrow_advance), pop_n_ind(input_dh$pop))
+  idx <- sample.int(pop_n_ind(input_dh$pop), size = n, replace = FALSE)
+  pop_sel <- pop_subset(input_dh$pop, idx)
 
-  run_phenotype_trial(state, list(
-    trial_name = "HEADROW",
-    input_stage = "DH_BULK",
+  run_phenotype_trial(
+    state = state,
+    pop = pop_sel,
     output_stage = "HEADROW_SEL",
-    stream = "main",
-    input_policy = "latest_one",
+    input_cohorts = input_dh$source_ids,
     selection_strategy = "Advance fixed n from DH_BULK to headrows",
-    select_entries_fn = sel_head,
-    n_headrow_advance = cfg$n_headrow_advance,
     traits = 1L,
     n_loc = 1L,
     reps = 1L,
     varE = cfg$varE_headrow,
     duration_years = 1,
-    consume_input = TRUE,
+    stream = "main",
     cost_per_plot = cfg$cost_headrow_line,
     silent = TRUE
-  ))
+  )
 }
 
-run_pyt <- function(state, cfg) {
+select_from_headrow_and_run_PYT <- function(state, cfg) {
   bp_debug_break(state, cfg)
+  input_headrow <- select_latest_available(state, stage = "HEADROW_SEL", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_headrow, cfg)
+  if (chk$skip) return(chk$state)
+  state <- chk$state
 
-  sel_to_pyt <- function(state, src, pop_in, cfg_local) {
-    n <- min(as.integer(cfg_local$n_pyt), pop_n_ind(pop_in))
-    sample.int(pop_n_ind(pop_in), size = n, replace = FALSE)
-  }
+  n <- min(as.integer(cfg$n_pyt), pop_n_ind(input_headrow$pop))
+  idx <- sample.int(pop_n_ind(input_headrow$pop), size = n, replace = FALSE)
+  pop_sel <- pop_subset(input_headrow$pop, idx)
 
-  run_phenotype_trial(state, list(
-    trial_name = "PYT",
-    input_stage = "HEADROW_SEL",
+  run_phenotype_trial(
+    state = state,
+    pop = pop_sel,
     output_stage = "PYT",
-    stream = "main",
-    input_policy = "latest_one",
+    input_cohorts = input_headrow$source_ids,
     selection_strategy = "Random subset from HEADROW_SEL",
-    select_entries_fn = sel_to_pyt,
-    n_pyt = cfg$n_pyt,
     traits = 1L,
     n_loc = 1L,
     reps = 1L,
     varE = cfg$varE_pyt,
     duration_years = 1,
-    consume_input = TRUE,
+    stream = "main",
     cost_per_plot = cfg$cost_plot_pyt,
     silent = TRUE
-  ))
+  )
 }
 
-run_ayt <- function(state, cfg) {
+select_from_PYT_and_run_AYT <- function(state, cfg) {
   bp_debug_break(state, cfg)
+  input_pyt <- select_latest_available(state, stage = "PYT", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_pyt, cfg)
+  if (chk$skip) return(chk$state)
+  state <- chk$state
 
-  sel_to_ayt <- function(state, src, pop_in, cfg_local) {
-    n <- min(as.integer(cfg_local$n_pyt_to_ayt), pop_n_ind(pop_in))
-    ph <- pop_in@pheno
-    if (is.null(ph)) {
-      return(sample.int(pop_n_ind(pop_in), size = n, replace = FALSE))
-    }
+  n <- min(as.integer(cfg$n_pyt_to_ayt), pop_n_ind(input_pyt$pop))
+  ph <- input_pyt$pop@pheno
+  idx <- if (is.null(ph)) {
+    sample.int(pop_n_ind(input_pyt$pop), size = n, replace = FALSE)
+  } else {
     if (!is.null(dim(ph))) ph <- ph[, 1L]
     order(as.numeric(ph), decreasing = TRUE)[seq_len(n)]
   }
+  pop_sel <- pop_subset(input_pyt$pop, idx)
 
-  run_phenotype_trial(state, list(
-    trial_name = "AYT",
-    input_stage = "PYT",
+  run_phenotype_trial(
+    state = state,
+    pop = pop_sel,
     output_stage = "AYT",
-    stream = "main",
-    input_policy = "latest_one",
+    input_cohorts = input_pyt$source_ids,
     selection_strategy = "Top phenotype from latest PYT",
-    select_entries_fn = sel_to_ayt,
-    n_pyt_to_ayt = cfg$n_pyt_to_ayt,
     traits = 1L,
     n_loc = cfg$ayt_effective_reps,
     reps = 1L,
     varE = cfg$varE_ayt,
     duration_years = 1,
-    consume_input = FALSE,
+    stream = "main",
     cost_per_plot = cfg$cost_plot_ayt,
     silent = TRUE
-  ))
+  )
 }
 
-run_eyt1 <- function(state, cfg) {
+select_from_AYT_and_run_EYT1 <- function(state, cfg) {
   bp_debug_break(state, cfg)
+  input_ayt <- select_latest_available(state, stage = "AYT", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_ayt, cfg)
+  if (chk$skip) return(chk$state)
+  state <- chk$state
 
-  sel_to_eyt <- function(state, src, pop_in, cfg_local) {
-    n <- min(as.integer(cfg_local$n_ayt_to_eyt), pop_n_ind(pop_in))
-    ph <- pop_in@pheno
-    if (is.null(ph)) {
-      return(sample.int(pop_n_ind(pop_in), size = n, replace = FALSE))
-    }
+  n <- min(as.integer(cfg$n_ayt_to_eyt), pop_n_ind(input_ayt$pop))
+  ph <- input_ayt$pop@pheno
+  idx <- if (is.null(ph)) {
+    sample.int(pop_n_ind(input_ayt$pop), size = n, replace = FALSE)
+  } else {
     if (!is.null(dim(ph))) ph <- ph[, 1L]
     order(as.numeric(ph), decreasing = TRUE)[seq_len(n)]
   }
+  pop_sel <- pop_subset(input_ayt$pop, idx)
 
-  run_phenotype_trial(state, list(
-    trial_name = "EYT1",
-    input_stage = "AYT",
+  run_phenotype_trial(
+    state = state,
+    pop = pop_sel,
     output_stage = "EYT1",
-    stream = "main",
-    input_policy = "latest_one",
+    input_cohorts = input_ayt$source_ids,
     selection_strategy = "Top phenotype from latest AYT",
-    select_entries_fn = sel_to_eyt,
-    n_ayt_to_eyt = cfg$n_ayt_to_eyt,
     traits = 1L,
     n_loc = cfg$eyt_effective_reps,
     reps = 1L,
     varE = cfg$varE_eyt,
     duration_years = 1,
-    consume_input = FALSE,
+    stream = "main",
     cost_per_plot = cfg$cost_plot_eyt,
     silent = TRUE
-  ))
+  )
 }
 
-run_eyt2 <- function(state, cfg) {
+select_from_EYT1_and_run_EYT2 <- function(state, cfg) {
   bp_debug_break(state, cfg)
+  input_eyt1 <- select_latest_available(state, stage = "EYT1", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_eyt1, cfg)
+  if (chk$skip) return(chk$state)
+  state <- chk$state
 
-  run_phenotype_trial(state, list(
-    trial_name = "EYT2",
-    input_stage = "EYT1",
+  run_phenotype_trial(
+    state = state,
+    pop = input_eyt1$pop,
     output_stage = "EYT2",
-    stream = "main",
-    input_policy = "latest_one",
+    input_cohorts = input_eyt1$source_ids,
     selection_strategy = "Re-evaluate EYT1 lines",
     traits = 1L,
     n_loc = cfg$eyt_effective_reps,
     reps = 1L,
     varE = cfg$varE_eyt,
     duration_years = 1,
-    consume_input = FALSE,
+    stream = "main",
     cost_per_plot = cfg$cost_plot_eyt,
     silent = TRUE
-  ))
+  )
 }
 
-run_release_variety <- function(state, cfg) {
+select_from_EYT_and_release_Variety <- function(state, cfg) {
   bp_debug_break(state, cfg)
 
-  src <- get_ready_pop(state, stage = "EYT2", stream = "main", policy = "latest_one", combine = TRUE, silent = TRUE)
-  if (is.null(src)) return(state)
+  input_eyt2 <- select_latest_available(state, stage = "EYT2", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_eyt2, cfg)
+  if (chk$skip) return(chk$state)
+  state <- chk$state
 
-  pop <- src$pop
+  pop <- input_eyt2$pop
 
   ph <- state$phenotype_log
   ph <- ph[
@@ -620,7 +626,7 @@ run_release_variety <- function(state, cfg) {
     state = state,
     pop = variety,
     stage = "Variety",
-    source = src,
+    source = input_eyt2,
     ready_in_years = 0,
     stream = "main",
     selection_strategy = "Best 2-year EYT mean phenotype",
@@ -631,16 +637,16 @@ run_release_variety <- function(state, cfg) {
     state$outputs$varieties,
     data.frame(
       tick = as.integer(state$time$tick),
-      source_cohort_id = paste(src$source_ids, collapse = ";"),
+      source_cohort_id = paste(input_eyt2$source_ids, collapse = ";"),
       variety_id = as.integer(variety@id),
       stringsAsFactors = FALSE
     )
   )
 
-  close_sources(state, src)
+  state
 }
 
-run_pd_genotype_and_update_model <- function(state, cfg) {
+genotype_PD_and_update_GP_model <- function(state, cfg) {
   bp_debug_break(state, cfg)
 
   state <- run_genotyping(state, list(
@@ -685,22 +691,22 @@ run_one_year <- function(state, cfg, year_index) {
   tick_start <- as.integer(state$time$tick)
 
   # tick 1: annual DH production first, then PI cycle A + PD stage starts + model refresh
-  state <- run_pd_make_dh(state, cfg)
-  state <- run_pi_cycle(state, cfg, cycle_label = sprintf("year_%d_cycle_A", year_index))
-  state <- run_headrows(state, cfg)
-  state <- run_pyt(state, cfg)
-  state <- run_ayt(state, cfg)
-  state <- run_eyt1(state, cfg)
-  state <- run_eyt2(state, cfg)
-  state <- run_release_variety(state, cfg)
-  state <- run_pd_genotype_and_update_model(state, cfg)
+  state <- advance_PD_seed_to_DH(state, cfg)
+  state <- select_from_PI_and_cross_next_PI_cycle(state, cfg, cycle_label = sprintf("year_%d_cycle_A", year_index))
+  state <- select_from_DH_and_run_headrow(state, cfg)
+  state <- select_from_headrow_and_run_PYT(state, cfg)
+  state <- select_from_PYT_and_run_AYT(state, cfg)
+  state <- select_from_AYT_and_run_EYT1(state, cfg)
+  state <- select_from_EYT1_and_run_EYT2(state, cfg)
+  state <- select_from_EYT_and_release_Variety(state, cfg)
+  state <- genotype_PD_and_update_GP_model(state, cfg)
   state <- bp_advance_time(state, n_ticks = 1)
 
   # tick 2: no new events
   state <- bp_advance_time(state, n_ticks = 1)
 
   # tick 3: PI cycle B
-  state <- run_pi_cycle(state, cfg, cycle_label = sprintf("year_%d_cycle_B", year_index))
+  state <- select_from_PI_and_cross_next_PI_cycle(state, cfg, cycle_label = sprintf("year_%d_cycle_B", year_index))
   state <- bp_advance_time(state, n_ticks = 1)
 
   # tick 4: no new events
@@ -814,7 +820,11 @@ init_two_part_from_wheat_conv <- function(warm_years = 20L, cfg = make_two_part_
     stop("Could not load run_wheat_conv_nogs() from examples/Wheat_Conv_noGS_readable_structured.R", call. = FALSE)
   }
 
-  warm_state <- env$run_wheat_conv_nogs(n_years = as.integer(warm_years), cfg = env$make_wheat_conv_nogs_cfg())
+  warm_state <- env$run_wheat_conv_nogs(
+    n_fill_years = as.integer(warm_years),
+    n_run_years = 0L,
+    cfg = env$make_wheat_conv_nogs_cfg()
+  )
 
   cfg <- resolve_two_part_varE(cfg, warm_state$pops[[warm_state$cohorts$cohort_id[1L]]])
 
@@ -876,17 +886,34 @@ print_two_part_summary <- function(state) {
   bp_print_event_timeline(state, collapse_year_patterns = TRUE, digits = 2)
 }
 
+# Runner -------------------------------------------------------------------
+run_two_part_warm_draft <- function(
+    warm_years = 20L,
+    n_fill_years = 3L,
+    n_run_years = 10L,
+    cfg = make_two_part_cfg()) {
+  sim <- init_two_part_from_wheat_conv(warm_years = warm_years, cfg = cfg)
+  state <- sim$state
+  cfg <- sim$cfg
+
+  cfg$fail_on_missing_input <- FALSE
+  for (fill_yr in seq_len(as.integer(n_fill_years))) {
+    state <- run_one_year(state, cfg, year_index = fill_yr)
+  }
+  cfg$fail_on_missing_input <- TRUE
+  for (run_yr in as.integer(n_fill_years) + seq_len(as.integer(n_run_years))) {
+    state <- run_one_year(state, cfg, year_index = run_yr)
+  }
+
+  state
+}
+
 
 # Script Entry -------------------------------------------------------------
-if (identical(environment(), globalenv())) {
+if (identical(environment(), globalenv()) && !identical(Sys.getenv("BPS_SKIP_SCRIPT_ENTRY"), "1")) {
   print_two_part_setup()
 
   cfg <- make_two_part_cfg()
-  sim <- init_two_part_from_wheat_conv(warm_years = 20L, cfg = cfg)
-  out <- sim$state
-  cfg <- sim$cfg
-  for (yr in seq_len(10L)) {
-    out <- run_one_year(out, cfg, year_index = yr)
-  }
+  out <- run_two_part_warm_draft(warm_years = 20L, n_fill_years = 3L, n_run_years = 10L, cfg = cfg)
   print_two_part_summary(out)
 }

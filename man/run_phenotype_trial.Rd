@@ -4,44 +4,101 @@
 \alias{run_phenotype_trial}
 \title{Run Phenotyping Trial}
 \usage{
-run_phenotype_trial(state, cfg)
+run_phenotype_trial(
+  state,
+  cfg = NULL,
+  pop = NULL,
+  output_stage = NULL,
+  input_cohorts = NULL,
+  selection_strategy = NULL,
+  traits = 1L,
+  n_loc = 1L,
+  reps = 1L,
+  varE = NULL,
+  duration_years = 1,
+  stream = "main",
+  output_stream = NULL,
+  cycle_id = NULL,
+  cost_per_plot = 10,
+  trial_name = NULL,
+  use_env_control = FALSE,
+  env_means = NULL,
+  env_mean_mu = NULL,
+  env_mean_sd = NULL,
+  env_year_sd = NULL,
+  log_per_environment = TRUE,
+  log_aggregate = TRUE,
+  inherit_genotypes = TRUE,
+  silent = FALSE,
+  fail_if_no_ready = FALSE
+)
 }
 \arguments{
 \item{state}{Program state.}
 
-\item{cfg}{Trial configuration list.}
+\item{cfg}{Legacy configuration list (compatibility mode). Prefer explicit
+arguments with `pop`.}
+
+\item{pop}{Pop object to phenotype (recommended mode).}
+
+\item{output_stage}{Output stage name for created trial cohort.}
+
+\item{input_cohorts}{Source cohort id(s), source bundle, or data frame with
+`cohort_id` column used for lineage logging.}
+
+\item{selection_strategy}{Human-readable selection strategy text for event
+logging.}
+
+\item{traits}{Trait index/vector. Default `1L`.}
+
+\item{n_loc}{Number of locations represented. Default `1L`.}
+
+\item{reps}{Replications per location. Default `1L`.}
+
+\item{varE}{Residual variance passed to `AlphaSimR::setPheno`.}
+
+\item{duration_years}{Delay until output cohort is available.}
+
+\item{stream}{Output stream label (default `"main"`).}
+
+\item{output_stream}{Optional output stream override.}
+
+\item{cycle_id}{Optional output cycle id override.}
+
+\item{cost_per_plot}{Cost per plot for logging.}
+
+\item{trial_name}{Optional trial label for environment-mean persistence.}
+
+\item{use_env_control}{Logical; when `TRUE`, use explicit environment
+generation (`onlyPheno=TRUE`) and aggregate line means.}
+
+\item{env_means}{Optional fixed environment means vector (length `n_loc`).}
+
+\item{env_mean_mu}{Mean of generated base environment means when
+`env_means` is not provided.}
+
+\item{env_mean_sd}{SD of generated base environment means.}
+
+\item{env_year_sd}{Year-specific environment perturbation SD.}
+
+\item{log_per_environment}{Log per-environment rows in `phenotype_log`.}
+
+\item{log_aggregate}{Log aggregate line-mean rows (`environment=0`).}
+
+\item{inherit_genotypes}{Propagate genotype availability from source cohort(s)
+to output cohort when possible.}
+
+\item{silent}{Suppress informational no-ready messages in legacy `cfg` mode.}
+
+\item{fail_if_no_ready}{Error on no-ready cohorts in legacy `cfg` mode.}
 }
 \value{
 Updated program state.
 }
 \description{
-Generic field-trial runner with source selection, phenotype generation,
-phenotype logging, output cohort creation, and cost logging.
+Generic field-trial runner with phenotype generation, phenotype logging,
+output cohort creation, and cost logging.
 }
-\section{Required `cfg` fields}{
-
-\describe{
-  \item{`input_stage`}{Source cohort stage to phenotype.}
-  \item{`output_stage`}{Stage name for created trial cohort(s).}
-  \item{`varE`}{Residual variance passed to `AlphaSimR::setPheno`.}
-}
-}
-
-\section{Common optional `cfg` fields}{
-
-\describe{
-  \item{`traits`}{Trait index/vector. Default `1L`.}
-  \item{`n_loc`}{Number of locations. Default `1L`.}
-  \item{`reps`}{Replications per location. Default `1L`.}
-  \item{`duration_years`}{Delay until output cohort is available.}
-  \item{`cost_per_plot`}{Cost per plot for logging.}
-  \item{`select_entries_fn`}{Function `(state, src, pop_in, cfg) -> idx` for entry selection.}
-  \item{`input_policy`}{Source policy (`latest_one`, `latest_n`, `all_ready`, ...).}
-  \item{`consume_input`}{Close source cohorts after creating output.}
-  \item{`inherit_genotypes`}{Propagate genotype availability to copied subset cohorts.}
-}
-}
-
 \section{Environment-control options}{
 
 To model explicit environment means, set one of `use_env_control = TRUE`,
@@ -58,6 +115,37 @@ aggregated into `pop_trial@pheno`.
 }
 }
 
+\section{Usage modes}{
+
+Recommended explicit mode:
+\preformatted{
+src <- select_latest_available(state, stage = "PYT", stream = "main")
+sel <- AlphaSimR::selectInd(src$pop, nInd = 50, use = "pheno", simParam = state$sim$SP)
+state <- run_phenotype_trial(
+  state = state,
+  pop = sel,
+  output_stage = "AYT",
+  input_cohorts = src$source_ids,
+  selection_strategy = "Top phenotype from latest PYT",
+  traits = 1L,
+  n_loc = 4L,
+  reps = 2L,
+  varE = 1.0,
+  duration_years = 1
+)
+}
+
+Legacy compatibility mode:
+\preformatted{
+state <- run_phenotype_trial(state, cfg = list(
+  input_stage = "PYT",
+  output_stage = "AYT",
+  select_entries_fn = function(state, src, pop_in, cfg) seq_len(min(50, pop_n_ind(pop_in))),
+  traits = 1L, n_loc = 4L, reps = 2L, varE = 1.0
+))
+}
+}
+
 \examples{
 \donttest{
 if (requireNamespace("AlphaSimR", quietly = TRUE)) {
@@ -70,9 +158,13 @@ if (requireNamespace("AlphaSimR", quietly = TRUE)) {
   parents <- newPop(h, simParam = SP)
   state <- put_stage_pop(state, parents, stage = "F5", ready_in_years = 0)
 
-  cfg <- list(
-    input_stage = "F5",
+  src <- select_latest_available(state, stage = "F5", stream = "main", combine = TRUE)
+  state <- run_phenotype_trial(
+    state = state,
+    pop = src$pop,
     output_stage = "PYT",
+    input_cohorts = src$source_ids,
+    selection_strategy = "All entries from latest F5",
     traits = 1L,
     n_loc = 4L,
     reps = 2L,
@@ -83,7 +175,6 @@ if (requireNamespace("AlphaSimR", quietly = TRUE)) {
     env_mean_sd = 1,
     env_year_sd = 0.2
   )
-  state <- run_phenotype_trial(state, cfg)
 }
 }
 }
