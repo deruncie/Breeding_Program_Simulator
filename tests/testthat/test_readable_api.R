@@ -452,7 +452,7 @@ test_that("run_phenotype_trial respects log_per_environment and log_aggregate", 
     consume_input = FALSE
   )
   state1 <- BreedingProgramSimulator:::run_phenotype_trial(state, cfg_env_only)
-  expect_equal(sort(unique(state1$phenotype_log$environment)), c(1L, 2L, 3L))
+  expect_equal(sort(unique(state1$phenotype_log$environment)), c("1", "2", "3"))
   expect_equal(
     nrow(state1$phenotype_log),
     BreedingProgramSimulator:::pop_n_ind(state1$pops[[state1$cohorts$cohort_id[2]]]) * 3L
@@ -460,7 +460,7 @@ test_that("run_phenotype_trial respects log_per_environment and log_aggregate", 
 
   cfg_agg_only <- modifyList(cfg_env_only, list(log_per_environment = FALSE, log_aggregate = TRUE))
   state2 <- BreedingProgramSimulator:::run_phenotype_trial(state, cfg_agg_only)
-  expect_equal(unique(state2$phenotype_log$environment), 0L)
+  expect_equal(unique(state2$phenotype_log$environment), "0")
   expect_equal(
     nrow(state2$phenotype_log),
     BreedingProgramSimulator:::pop_n_ind(state2$pops[[state2$cohorts$cohort_id[2]]])
@@ -636,4 +636,96 @@ test_that("put_stage_pop accepts source_ids and strategy text", {
   expect_equal(state$cohorts$selection_strategy[idx], "Top 3 by ebv")
   expect_equal(state$cohorts$cross_strategy[idx], "random mating")
   expect_true(any(state$event_log$output_id == cid & state$event_log$event_type == "stage_output"))
+})
+
+test_that("bp_record_pheno supports sparse matrices and trait names", {
+  state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
+
+  ph <- matrix(
+    c(4.1, NA, 3.9,
+      5.2, 5.1, NA),
+    nrow = 3,
+    ncol = 2
+  )
+
+  state1 <- BreedingProgramSimulator:::bp_record_pheno(
+    state = state,
+    cohort_id = "cohort_0001",
+    stage = "PYT",
+    individual_id = c(101L, 102L, 103L),
+    traits = c("yield_env1", "yield_env2"),
+    pheno_matrix = ph,
+    available_tick = 4L,
+    n_loc = 2L,
+    reps = 1L,
+    drop_na = TRUE
+  )
+  expect_equal(nrow(state1$phenotype_log), 4L)
+  expect_true(all(state1$phenotype_log$trait %in% c("yield_env1", "yield_env2")))
+  expect_false(any(is.na(state1$phenotype_log$phenotype_value)))
+
+  state2 <- BreedingProgramSimulator:::bp_record_pheno(
+    state = state,
+    cohort_id = "cohort_0001",
+    stage = "PYT",
+    individual_id = c(101L, 102L, 103L),
+    traits = c("yield_env1", "yield_env2"),
+    pheno_matrix = ph,
+    available_tick = 4L,
+    n_loc = 2L,
+    reps = 1L,
+    drop_na = FALSE
+  )
+  expect_equal(nrow(state2$phenotype_log), 6L)
+  expect_true(any(is.na(state2$phenotype_log$phenotype_value)))
+
+  ph_named <- ph
+  colnames(ph_named) <- c("yield_env1", "yield_env2")
+  state3 <- BreedingProgramSimulator:::bp_record_pheno(
+    state = state,
+    cohort_id = "cohort_0001",
+    stage = "PYT",
+    individual_id = c(101L, 102L, 103L),
+    traits = NULL,
+    pheno_matrix = ph_named,
+    available_tick = 4L,
+    n_loc = 2L,
+    reps = 1L,
+    drop_na = TRUE
+  )
+  expect_true(all(state3$phenotype_log$trait %in% c("yield_env1", "yield_env2")))
+
+  ph9 <- matrix(seq_len(18), nrow = 2, ncol = 9)
+  state4 <- BreedingProgramSimulator:::bp_record_pheno(
+    state = state,
+    cohort_id = "cohort_0001",
+    stage = "PYT",
+    individual_id = c(201L, 202L),
+    traits = rep(c("T1", "T2", "T3"), 3),
+    pheno_matrix = ph9,
+    available_tick = 4L,
+    n_loc = 3L,
+    reps = 1L,
+    environment = rep(c("E1", "E2", "E3"), each = 3),
+    drop_na = TRUE
+  )
+  expect_true(all(state4$phenotype_log$trait %in% c("T1", "T2", "T3")))
+  expect_true(all(state4$phenotype_log$environment %in% c("E1", "E2", "E3")))
+
+  expect_error(
+    BreedingProgramSimulator:::bp_record_pheno(
+      state = state,
+      cohort_id = "cohort_0001",
+      stage = "PYT",
+      individual_id = c(101L, 102L, 103L),
+      traits = c("t1", "t2"),
+      pheno_matrix = matrix(1:9, nrow = 3, ncol = 3),
+      available_tick = 4L,
+      n_loc = 1L,
+      reps = 1L,
+      environment = c("E1", "E2", "E3"),
+      drop_na = TRUE
+    ),
+    "not compatible with ncol\\(pheno_matrix\\)"
+  )
 })

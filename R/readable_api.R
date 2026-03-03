@@ -146,7 +146,7 @@ bp_empty_phenotype_log <- function() {
     cohort_id = character(),
     stage = character(),
     individual_id = integer(),
-    environment = integer(),
+    environment = character(),
     trait = character(),
     phenotype_value = numeric(),
     p_value = numeric(),
@@ -1167,33 +1167,96 @@ bp_refresh_genotyped_flags <- function(state) {
   state
 }
 
-# Internal helper: append phenotype rows for one environment/aggregate view.
+#' Record Phenotypes in Long Format
+#'
+#' Append phenotype observations to `state$phenotype_log`.
+#'
+#' This helper accepts a dense or sparse phenotype matrix with one row per
+#' individual and one column per trait label in `traits`. Output is stored in
+#' long format (`one row = one observed phenotype cell`).
+#'
+#' For sparse MET workflows, pass trait columns that encode trial/environment
+#' identity (for example `yield_env1`, `yield_env2`, ...) and set
+#' `drop_na = TRUE` so missing cells are not logged.
+#'
+#' @param state Program state.
+#' @param cohort_id Output cohort id.
+#' @param stage Output stage name.
+#' @param individual_id Integer vector of individual IDs; length must match
+#'   rows in `pheno_matrix`.
+#' @param traits Trait labels, either integer trait codes or character names.
+#'   If `NULL`, labels are inferred from `colnames(pheno_matrix)` when present,
+#'   otherwise default to `trait1`, `trait2`, ...
+#' @param pheno_matrix Numeric vector or matrix of phenotypes. If a vector is
+#'   provided, it is treated as a one-column matrix.
+#' @param available_tick Tick when these observations become available.
+#' @param n_loc Number of locations represented by this record block.
+#' @param reps Number of reps represented by this record block.
+#' @param environment Environment id/label(s) for this record block. Can be a
+#'   scalar or a vector. If a vector is provided, it is aligned to phenotype
+#'   columns with the same recycling rules as `traits`. If `NULL`, defaults to
+#'   `NA`.
+#' @param p_value Optional environment mean/shift value for this record block.
+#' @param drop_na Logical; if `TRUE`, rows with `NA` phenotype values are
+#'   omitted from the appended log.
+#'
+#' @return Updated program state.
+#' @export
 bp_record_pheno <- function(
   state,
   cohort_id,
   stage,
   individual_id,
-  traits,
+  traits = NULL,
   pheno_matrix,
   available_tick,
   n_loc,
   reps,
-  environment = NA_integer_,
-  p_value = NA_real_
+  environment = NULL,
+  p_value = NA_real_,
+  drop_na = TRUE
 ) {
-  tr <- as.integer(traits)
   ph <- pheno_matrix
   if (is.null(dim(ph))) {
     ph <- matrix(ph, ncol = 1)
   }
+  recycle_to_cols <- function(x, k, arg_name) {
+    if (length(x) == 1L) return(rep(x, k))
+    if (length(x) == k) return(x)
+    if (k %% length(x) == 0L) return(rep(x, length.out = k))
+    stop(
+      sprintf("bp_record_pheno: length(%s)=%d is not compatible with ncol(pheno_matrix)=%d", arg_name, length(x), k),
+      call. = FALSE
+    )
+  }
 
-  rows <- do.call(rbind, lapply(seq_along(tr), function(k) {
+  tr <- traits
+  if (is.null(tr)) {
+    if (!is.null(colnames(ph)) && length(colnames(ph)) == ncol(ph)) {
+      tr_labels <- as.character(colnames(ph))
+    } else {
+      tr_labels <- paste0("trait", seq_len(ncol(ph)))
+    }
+  } else if (is.numeric(tr)) {
+    tr_labels <- paste0("trait", as.integer(recycle_to_cols(tr, ncol(ph), "traits")))
+  } else {
+    tr_labels <- as.character(recycle_to_cols(tr, ncol(ph), "traits"))
+  }
+  env_labels <- if (is.null(environment)) rep(NA, ncol(ph)) else recycle_to_cols(environment, ncol(ph), "environment")
+  if (nrow(ph) != length(individual_id)) {
+    stop("bp_record_pheno: nrow(pheno_matrix) must match length(individual_id)", call. = FALSE)
+  }
+  if (ncol(ph) != length(tr_labels)) {
+    stop("bp_record_pheno: ncol(pheno_matrix) must match length(traits)", call. = FALSE)
+  }
+
+  rows <- do.call(rbind, lapply(seq_along(tr_labels), function(k) {
     data.frame(
       cohort_id = as.character(cohort_id),
       stage = as.character(stage),
       individual_id = as.integer(individual_id),
-      environment = as.integer(environment),
-      trait = paste0("trait", tr[k]),
+      environment = as.character(env_labels[k]),
+      trait = tr_labels[k],
       phenotype_value = as.numeric(ph[, k]),
       p_value = as.numeric(p_value),
       measured_tick = as.integer(state$time$tick),
@@ -1203,6 +1266,10 @@ bp_record_pheno <- function(
       stringsAsFactors = FALSE
     )
   }))
+  if (isTRUE(drop_na) && nrow(rows) > 0L) {
+    rows <- rows[!is.na(rows$phenotype_value), , drop = FALSE]
+  }
+  if (nrow(rows) == 0L) return(state)
 
   state$phenotype_log <- rbind(state$phenotype_log, rows)
   state
