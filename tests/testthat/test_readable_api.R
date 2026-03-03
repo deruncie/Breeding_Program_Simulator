@@ -19,6 +19,34 @@ test_that("source policy defaults to latest_one and supports latest_n", {
   expect_equal(out_n$cohort_id, c("c2", "c3"))
 })
 
+test_that("select_latest_available supports n and preserves source ids", {
+  state <- BreedingProgramSimulator:::bp_init_state(
+    SP = NULL,
+    dt = 1,
+    start_time = 0,
+    sim = list(default_chip = 1L)
+  )
+
+  state <- BreedingProgramSimulator:::bp_add_cohort(state, data.frame(v = 1:2), stage = "PYT", duration_years = 0)
+  state <- BreedingProgramSimulator:::bp_advance_time(state, 1L)
+  state <- BreedingProgramSimulator:::bp_add_cohort(state, data.frame(v = 3:4), stage = "PYT", duration_years = 0)
+  state <- BreedingProgramSimulator:::bp_advance_time(state, 1L)
+  state <- BreedingProgramSimulator:::bp_add_cohort(state, data.frame(v = 5:6), stage = "PYT", duration_years = 0)
+
+  src1 <- BreedingProgramSimulator:::select_latest_available(state, stage = "PYT", n = 1L, combine = TRUE, silent = TRUE)
+  expect_equal(length(src1$source_ids), 1L)
+  expect_equal(src1$source_ids[[1]], tail(state$cohorts$cohort_id, 1L))
+
+  src2 <- BreedingProgramSimulator:::select_latest_available(state, stage = "PYT", n = 2L, combine = TRUE, silent = TRUE)
+  expect_equal(length(src2$source_ids), 2L)
+  expect_equal(nrow(src2$pop), 4L)
+
+  expect_error(
+    BreedingProgramSimulator:::select_latest_available(state, stage = "PYT", n = 2L, combine = FALSE, silent = TRUE),
+    "combine=FALSE is ambiguous when n > 1"
+  )
+})
+
 test_that("run_genotyping is idempotent for same cohort and chip", {
   state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0, sim = list(default_chip = 1L))
 
@@ -116,7 +144,7 @@ test_that("run_train_gp_model wraps train_model_fn errors with context", {
   )
 })
 
-test_that("run_predict_ebv accepts multi-trait matrix output", {
+test_that("predict_ebv_pop accepts multi-trait matrix output", {
   testthat::skip_if_not_installed("AlphaSimR")
   library(AlphaSimR)
 
@@ -155,13 +183,13 @@ test_that("run_predict_ebv accepts multi-trait matrix output", {
     }
   )
 
-  pop2 <- BreedingProgramSimulator:::run_predict_ebv(pop, model_entry, state, cfg, stage_label = "TEST")
+  pop2 <- BreedingProgramSimulator:::predict_ebv_pop(pop, model_entry, state, cfg, stage_label = "TEST")
   expect_equal(dim(pop2@ebv), c(pop2@nInd, 2L))
   s <- selectInd(pop2, nInd = 3, use = "ebv", trait = 2, simParam = SP)
   expect_equal(s@nInd, 3L)
 })
 
-test_that("run_predict_ebv requires logged genotyping by default", {
+test_that("predict_ebv_pop requires logged genotyping by default", {
   testthat::skip_if_not_installed("AlphaSimR")
   library(AlphaSimR)
 
@@ -189,9 +217,100 @@ test_that("run_predict_ebv requires logged genotyping by default", {
   )
 
   expect_error(
-    BreedingProgramSimulator:::run_predict_ebv(pop, model_entry, state, cfg, stage_label = "TEST"),
+    BreedingProgramSimulator:::predict_ebv_pop(pop, model_entry, state, cfg, stage_label = "TEST"),
     "requires genotyping"
   )
+})
+
+test_that("run_predict_ebv persists EBVs to matching cohorts in state", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  h <- quickHaplo(12, 2, 40)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+  pop <- newPop(h, simParam = SP)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0, sim = list(default_chip = 1L))
+  state <- BreedingProgramSimulator:::bp_add_cohort(state, pop, stage = "TEST", duration_years = 0)
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+
+  state$genotype_log <- rbind(
+    state$genotype_log,
+    data.frame(
+      cohort_id = cid,
+      chip = "1",
+      started_tick = 0L,
+      done_tick = 0L,
+      available_tick = 0L,
+      n_ind = pop@nInd,
+      stringsAsFactors = FALSE
+    )
+  )
+
+  state$gs_models[["m1"]] <- list(
+    model = list(dummy = TRUE),
+    chip = "1",
+    predict_ebv_fn = function(target_pop, model_obj, state, cfg, model_entry) {
+      seq_len(target_pop@nInd)
+    }
+  )
+
+  state2 <- BreedingProgramSimulator:::run_predict_ebv(
+    state,
+    list(model_id = "m1", cohort_ids = cid)
+  )
+  expect_equal(ncol(state2$pops[[cid]]@ebv), 1L)
+  expect_false(all(is.na(state2$pops[[cid]]@ebv[, 1])))
+})
+
+test_that("bp_log_event collapses multi-stage input to one scalar label", {
+  state <- BreedingProgramSimulator:::bp_init_state(
+    SP = NULL,
+    dt = 1,
+    start_time = 0,
+    sim = list(default_chip = 1L)
+  )
+
+  state2 <- BreedingProgramSimulator:::bp_log_event(
+    state = state,
+    fn = "x",
+    event_type = "y",
+    stage = c("PYT", "AYT"),
+    source_ids = character(0),
+    output_id = "o1",
+    event_string = "msg"
+  )
+
+  expect_equal(nrow(state2$event_log), 1L)
+  expect_equal(state2$event_log$stage[[1]], "PYT;AYT")
+})
+
+test_that("bp_log_event scalarizes vector text fields", {
+  state <- BreedingProgramSimulator:::bp_init_state(
+    SP = NULL,
+    dt = 1,
+    start_time = 0,
+    sim = list(default_chip = 1L)
+  )
+
+  state2 <- BreedingProgramSimulator:::bp_log_event(
+    state = state,
+    fn = c("f1", "f2"),
+    event_type = c("e1", "e2"),
+    stage = "PYT",
+    source_ids = c("c1", "c2"),
+    output_id = c("o1", "o2"),
+    event_string = c("msg1", "msg2"),
+    template_string = c("tpl1", "tpl2")
+  )
+
+  expect_equal(nrow(state2$event_log), 1L)
+  expect_equal(state2$event_log$fn[[1]], "f1;f2")
+  expect_equal(state2$event_log$event_type[[1]], "e1;e2")
+  expect_equal(state2$event_log$output_id[[1]], "o1;o2")
+  expect_equal(state2$event_log$event_string[[1]], "msg1;msg2")
+  expect_equal(state2$event_log$template_string[[1]], "tpl1;tpl2")
 })
 
 test_that("cohort availability and genotyped flags are gated by tick", {

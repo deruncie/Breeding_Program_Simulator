@@ -13,7 +13,6 @@ library(AlphaSimR)
 
 source("R/operators.R")
 source("R/readable_api.R")
-source("R/readable_wrappers.R")
 source("R/monitoring.R")
 
 
@@ -32,16 +31,17 @@ make_cross_plan_no_self <- function(n_parents, n_crosses) {
 
 
 # Event Verbs: Recurrent Cycle --------------------------------------------
-run_recurrent_gs_tick <- function(state, cfg) {
+select_from_RC_and_cross_next_RC_tick <- function(state, cfg) {
   bp_debug_break(state, cfg)
-  src <- get_ready_pop(state, stage = cfg$rc_stage, stream = "main", policy = "latest_one", combine = TRUE, silent = TRUE)
-  if (is.null(src)) return(state)
+  input_rc <- select_latest_available(state, stage = cfg$rc_stage, stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_rc, cfg)
+  if (chk$skip) return(chk$state)
 
-  pop <- src$pop
+  pop <- input_rc$pop
   model <- state$gs_models[[cfg$model_id]]
   if (is.null(model)) return(state)
 
-  pop <- run_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$source_ids), stage_label = "RC")
+  pop <- predict_ebv_pop(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = input_rc$source_ids), stage_label = "RC")
   sel <- selectInd(pop, nInd = min(cfg$rc_select_n, pop_n_ind(pop)), use = "ebv", trait = 1, simParam = state$sim$SP)
 
   plan <- make_cross_plan_no_self(pop_n_ind(sel), cfg$rc_crosses)
@@ -51,7 +51,7 @@ run_recurrent_gs_tick <- function(state, cfg) {
     state = state,
     pop = next_pop,
     stage = cfg$rc_stage,
-    source = src,
+    source = input_rc,
     selection_strategy = "Top by EBV from latest RC cohort",
     cross_strategy = "Random mating without selfing among selected RC parents",
     ready_in_years = cfg$rapid_cycle_length,
@@ -66,26 +66,27 @@ run_recurrent_gs_tick <- function(state, cfg) {
     n = cfg$rc_crosses,
     unit_cost = cfg$cost_cross
   )
-  close_sources(state, src)
+  state
 }
 
-run_start_rc_if_ready <- function(state, cfg) {
+initialize_RC_from_PYT_if_missing <- function(state, cfg) {
   bp_debug_break(state, cfg)
   already <- bp_get_ready_cohorts(state, stage = cfg$rc_stage, stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)
   if (nrow(already) > 0L) return(state)
 
-  src <- get_ready_pop(state, stage = "PYT", stream = "main", policy = "latest_one", combine = TRUE, silent = TRUE)
-  if (is.null(src)) return(state)
+  input_pyt <- select_latest_available(state, stage = "PYT", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_pyt, cfg)
+  if (chk$skip) return(chk$state)
 
-  n <- min(cfg$rc_init_n, pop_n_ind(src$pop))
-  idx <- sample.int(pop_n_ind(src$pop), size = n, replace = FALSE)
-  rc0 <- pop_subset(src$pop, idx)
+  n <- min(cfg$rc_init_n, pop_n_ind(input_pyt$pop))
+  idx <- sample.int(pop_n_ind(input_pyt$pop), size = n, replace = FALSE)
+  rc0 <- pop_subset(input_pyt$pop, idx)
 
   state <- put_stage_pop(
     state = state,
     pop = rc0,
     stage = cfg$rc_stage,
-    source = src,
+    source = input_pyt,
     selection_strategy = "Random sample from latest PYT to initialize RC",
     ready_in_years = 0,
     stream = "main",
@@ -103,15 +104,16 @@ run_start_rc_if_ready <- function(state, cfg) {
   ))
 }
 
-run_send_rc_to_dh <- function(state, cfg) {
+select_from_RC_and_send_to_DH <- function(state, cfg) {
   bp_debug_break(state, cfg)
-  src <- get_ready_pop(state, stage = cfg$rc_stage, stream = "main", policy = "latest_one", combine = TRUE, silent = TRUE)
-  if (is.null(src)) return(state)
+  input_rc <- select_latest_available(state, stage = cfg$rc_stage, stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_rc, cfg)
+  if (chk$skip) return(chk$state)
 
-  pop <- src$pop
+  pop <- input_rc$pop
   model <- state$gs_models[[cfg$model_id]]
   if (!is.null(model)) {
-    pop <- run_predict_ebv(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$source_ids), stage_label = "RC_to_DH")
+    pop <- predict_ebv_pop(pop, model, state, cfg = list(ebv_trait = 1, cohort_ids = input_rc$source_ids), stage_label = "RC_to_DH")
     send <- selectInd(pop, nInd = min(cfg$dh_n_entries_per_year, pop_n_ind(pop)), use = "ebv", trait = 1, simParam = state$sim$SP)
   } else {
     idx <- sample.int(pop_n_ind(pop), size = min(cfg$dh_n_entries_per_year, pop_n_ind(pop)), replace = FALSE)
@@ -123,7 +125,7 @@ run_send_rc_to_dh <- function(state, cfg) {
     state = state,
     pop = dh_send,
     stage = cfg$dh_stage,
-    source = src,
+    source = input_rc,
     selection_strategy = if (is.null(model)) "Random selection from RC" else "Top by EBV from RC",
     cross_strategy = "makeDH(nDH=1) per selected line",
     ready_in_years = 2,
@@ -135,36 +137,33 @@ run_send_rc_to_dh <- function(state, cfg) {
 
 
 # Event Verbs: Pipeline Trials --------------------------------------------
-run_pyt <- function(state, cfg) {
+select_from_DH_and_run_PYT <- function(state, cfg) {
   bp_debug_break(state, cfg)
-
-  sel_fn <- function(state, src, pop_in, cfg_local) {
-    n <- min(as.integer(cfg_local$n_pyt), pop_n_ind(pop_in))
-    sample.int(pop_n_ind(pop_in), size = n, replace = FALSE)
-  }
-
-  run_phenotype_trial(state, list(
-    trial_name = "PYT",
-    input_stage = cfg$dh_stage,
+  input_dh <- select_latest_available(state, stage = cfg$dh_stage, stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_dh, cfg)
+  if (chk$skip) return(chk$state)
+  n <- min(as.integer(cfg$n_pyt), pop_n_ind(input_dh$pop))
+  idx <- sample.int(pop_n_ind(input_dh$pop), size = n, replace = FALSE)
+  pyt_pop <- pop_subset(input_dh$pop, idx)
+  run_phenotype_trial(
+    state = state,
+    pop = pyt_pop,
     output_stage = "PYT",
-    stream = "main",
-    input_policy = "latest_one",
+    input_cohorts = input_dh$source_ids,
     selection_strategy = "Random subset from latest DH_PIPE",
-    select_entries_fn = sel_fn,
-    n_pyt = cfg$n_pyt,
     traits = 1,
     n_loc = 1,
     reps = 1,
     varE = cfg$varE,
     duration_years = 0.5,
-    consume_input = TRUE,
+    stream = "main",
     cost_per_plot = cfg$cost_plot_pyt,
     use_env_control = FALSE,
     silent = TRUE
-  ))
+  )
 }
 
-run_genotype_pyt <- function(state, cfg) {
+genotype_latest_PYT <- function(state, cfg) {
   bp_debug_break(state, cfg)
   run_genotyping(state, list(
     input_stage = "PYT",
@@ -178,7 +177,7 @@ run_genotype_pyt <- function(state, cfg) {
   ))
 }
 
-run_genotype_rc <- function(state, cfg) {
+genotype_latest_RC <- function(state, cfg) {
   bp_debug_break(state, cfg)
   run_genotyping(state, list(
     input_stage = cfg$rc_stage,
@@ -192,41 +191,37 @@ run_genotype_rc <- function(state, cfg) {
   ))
 }
 
-run_ayt <- function(state, cfg) {
+select_from_PYT_and_run_AYT <- function(state, cfg) {
   bp_debug_break(state, cfg)
-
-  sel_fn <- function(state, src, pop_in, cfg_local) {
-    model <- state$gs_models[[cfg_local$model_id]]
-    pop_scored <- if (is.null(model)) {
-      pop_in
-    } else {
-      run_predict_ebv(pop_in, model, state, cfg = list(ebv_trait = 1, cohort_ids = src$cohort_id), stage_label = "AYT")
-    }
-    n <- min(cfg_local$n_ayt, pop_n_ind(pop_scored))
-    selected <- if (is.null(model)) {
-      selectInd(pop_scored, nInd = n, use = "pheno", simParam = state$sim$SP)
-    } else {
-      selectInd(pop_scored, nInd = n, use = "ebv", trait = 1, simParam = state$sim$SP)
-    }
-    match(selected@id, pop_in@id)
+  input_pyt <- select_latest_available(state, stage = "PYT", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_pyt, cfg)
+  if (chk$skip) return(chk$state)
+  pop_in <- input_pyt$pop
+  model <- state$gs_models[[cfg$model_id]]
+  pop_scored <- if (is.null(model)) {
+    pop_in
+  } else {
+    predict_ebv_pop(pop_in, model, state, cfg = list(ebv_trait = 1, cohort_ids = input_pyt$source_ids), stage_label = "AYT")
+  }
+  n <- min(cfg$n_ayt, pop_n_ind(pop_scored))
+  ayt_pop <- if (is.null(model)) {
+    selectInd(pop_scored, nInd = n, use = "pheno", simParam = state$sim$SP)
+  } else {
+    selectInd(pop_scored, nInd = n, use = "ebv", trait = 1, simParam = state$sim$SP)
   }
 
-  run_phenotype_trial(state, list(
-    trial_name = "AYT",
-    input_stage = "PYT",
+  run_phenotype_trial(
+    state = state,
+    pop = ayt_pop,
     output_stage = "AYT",
-    stream = "main",
-    input_policy = "latest_one",
+    input_cohorts = input_pyt$source_ids,
     selection_strategy = "Top by EBV from latest PYT (fallback: phenotype)",
-    select_entries_fn = sel_fn,
-    model_id = cfg$model_id,
-    n_ayt = cfg$n_ayt,
     traits = 1,
     n_loc = 4,
     reps = 2,
     varE = cfg$varE,
     duration_years = 0.5,
-    consume_input = FALSE,
+    stream = "main",
     cost_per_plot = cfg$cost_plot_ayt,
     use_env_control = TRUE,
     env_mean_mu = 0,
@@ -235,10 +230,10 @@ run_ayt <- function(state, cfg) {
     log_per_environment = FALSE,
     log_aggregate = TRUE,
     silent = TRUE
-  ))
+  )
 }
 
-run_eyt <- function(state, cfg) {
+select_from_AYT_and_run_EYT <- function(state, cfg) {
   bp_debug_break(state, cfg)
   if (is.null(state$sim$eyt_base_means)) state$sim$eyt_base_means <- stats::rnorm(10, mean = 0, sd = 1)
 
@@ -246,27 +241,24 @@ run_eyt <- function(state, cfg) {
   year_shift_2 <- stats::rnorm(1, mean = 0, sd = cfg$eyt_year_shift_sd)
   env_means_20 <- c(state$sim$eyt_base_means + year_shift_1, state$sim$eyt_base_means + year_shift_2)
 
-  sel_fn <- function(state, src, pop_in, cfg_local) {
-    n <- min(cfg_local$n_eyt, pop_n_ind(pop_in))
-    selected <- selectInd(pop_in, nInd = n, use = "pheno", simParam = state$sim$SP)
-    match(selected@id, pop_in@id)
-  }
+  input_ayt <- select_latest_available(state, stage = "AYT", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_ayt, cfg)
+  if (chk$skip) return(chk$state)
+  n <- min(cfg$n_eyt, pop_n_ind(input_ayt$pop))
+  eyt_pop <- selectInd(input_ayt$pop, nInd = n, use = "pheno", simParam = state$sim$SP)
 
-  run_phenotype_trial(state, list(
-    trial_name = "EYT",
-    input_stage = "AYT",
+  run_phenotype_trial(
+    state = state,
+    pop = eyt_pop,
     output_stage = "EYT",
-    stream = "main",
-    input_policy = "latest_one",
+    input_cohorts = input_ayt$source_ids,
     selection_strategy = "Top by phenotype from latest AYT",
-    select_entries_fn = sel_fn,
-    n_eyt = cfg$n_eyt,
     traits = 1,
     n_loc = 20,
     reps = 4,
     varE = cfg$varE,
     duration_years = 1.5,
-    consume_input = FALSE,
+    stream = "main",
     cost_per_plot = cfg$cost_plot_eyt,
     use_env_control = TRUE,
     env_means = env_means_20,
@@ -274,15 +266,16 @@ run_eyt <- function(state, cfg) {
     log_per_environment = FALSE,
     log_aggregate = TRUE,
     silent = TRUE
-  ))
+  )
 }
 
-run_release_variety <- function(state, cfg) {
+select_from_EYT_and_release_Variety <- function(state, cfg) {
   bp_debug_break(state, cfg)
-  src <- get_ready_pop(state, stage = "EYT", stream = "main", policy = "latest_one", combine = TRUE, silent = TRUE)
-  if (is.null(src)) return(state)
+  input_eyt <- select_latest_available(state, stage = "EYT", stream = "main", combine = TRUE, silent = TRUE)
+  chk <- bp_skip_if_no_input(state, input_eyt, cfg)
+  if (chk$skip) return(chk$state)
 
-  variety <- selectInd(src$pop, nInd = 1, use = "pheno", simParam = state$sim$SP)
+  variety <- selectInd(input_eyt$pop, nInd = 1, use = "pheno", simParam = state$sim$SP)
   old_var <- bp_get_ready_cohorts(state, stage = "Variety", stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)
   if (nrow(old_var) > 0L) {
     for (i in seq_len(nrow(old_var))) state <- bp_close_cohort(state, old_var$cohort_id[i])
@@ -292,7 +285,7 @@ run_release_variety <- function(state, cfg) {
     state = state,
     pop = variety,
     stage = "Variety",
-    source = src,
+    source = input_eyt,
     selection_strategy = "Top by phenotype from latest EYT",
     ready_in_years = 0,
     stream = "main",
@@ -302,15 +295,15 @@ run_release_variety <- function(state, cfg) {
     state$outputs$varieties,
     data.frame(
       tick = as.integer(state$time$tick),
-      source_cohort_id = paste(src$source_ids, collapse = ";"),
+      source_cohort_id = paste(input_eyt$source_ids, collapse = ";"),
       variety_id = as.integer(variety@id),
       stringsAsFactors = FALSE
     )
   )
-  close_sources(state, src)
+  state
 }
 
-run_midyear_gp_update <- function(state, cfg) {
+update_GP_model_from_recent_PYT_midyear <- function(state, cfg) {
   bp_debug_break(state, cfg)
   run_train_gp_model(state, list(
     from_stage = "PYT",
@@ -330,20 +323,20 @@ run_one_year <- function(state, cfg, year_index) {
   bp_debug_break(state, cfg, year = year_index)
 
   # Stage events at year start.
-  state <- run_start_rc_if_ready(state, cfg)
-  state <- run_send_rc_to_dh(state, cfg)
-  state <- run_pyt(state, cfg)
-  state <- run_genotype_pyt(state, cfg)
-  state <- run_ayt(state, cfg)
-  state <- run_eyt(state, cfg)
-  state <- run_release_variety(state, cfg)
+  state <- initialize_RC_from_PYT_if_missing(state, cfg)
+  state <- select_from_RC_and_send_to_DH(state, cfg)
+  state <- select_from_DH_and_run_PYT(state, cfg)
+  state <- genotype_latest_PYT(state, cfg)
+  state <- select_from_PYT_and_run_AYT(state, cfg)
+  state <- select_from_AYT_and_run_EYT(state, cfg)
+  state <- select_from_EYT_and_release_Variety(state, cfg)
 
   # Within-year recurrent cycle and mid-year GP update.
   for (q in seq_len(cfg$ticks_per_year)) {
-    state <- run_recurrent_gs_tick(state, cfg)
-    state <- run_genotype_rc(state, cfg)
+    state <- select_from_RC_and_cross_next_RC_tick(state, cfg)
+    state <- genotype_latest_RC(state, cfg)
     state <- bp_advance_time(state, n_ticks = 1L)
-    if (q == 2L) state <- run_midyear_gp_update(state, cfg)
+    if (q == 2L) state <- update_GP_model_from_recent_PYT_midyear(state, cfg)
   }
 
   cat(sprintf(
@@ -453,12 +446,19 @@ bootstrap_with_pyt_seed <- function(state, SP, parents0, cfg) {
 
 
 # Top-Level Run ------------------------------------------------------------
-run_gstp_loop_demo_structured <- function(n_years = 14L, make_plots = FALSE) {
+run_gstp_loop_demo_structured <- function(n_fill_years = 4L, n_run_years = 10L, make_plots = FALSE) {
   cfg <- make_gstp_cfg(make_plots = make_plots)
   sim <- init_gstp_sim(cfg)
   state <- bootstrap_with_pyt_seed(sim$state, sim$SP, sim$parents0, cfg)
 
-  for (yr in seq_len(n_years)) state <- run_one_year(state, cfg, year_index = yr)
+  cfg$fail_on_missing_input <- FALSE
+  for (fill_yr in seq_len(as.integer(n_fill_years))) {
+    state <- run_one_year(state, cfg, year_index = fill_yr)
+  }
+  cfg$fail_on_missing_input <- TRUE
+  for (run_yr in as.integer(n_fill_years) + seq_len(as.integer(n_run_years))) {
+    state <- run_one_year(state, cfg, year_index = run_yr)
+  }
   invisible(state)
 }
 
@@ -495,7 +495,7 @@ print_gstp_summary <- function(state, show_event_timeline = FALSE) {
 
 
 # Script Entry -------------------------------------------------------------
-if (identical(environment(), globalenv())) {
-  out <- run_gstp_loop_demo_structured(n_years = 14, make_plots = FALSE)
+if (identical(environment(), globalenv()) && !identical(Sys.getenv("BPS_SKIP_SCRIPT_ENTRY"), "1")) {
+  out <- run_gstp_loop_demo_structured(n_fill_years = 4L, n_run_years = 10L, make_plots = FALSE)
   print_gstp_summary(out)
 }

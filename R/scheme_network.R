@@ -8,11 +8,12 @@ bp_expr_to_text <- function(expr) {
 # Normalize stage/model labels for graph output.
 bp_norm_label <- function(x) {
   s <- trimws(as.character(x))
-  if (grepl('^".*"$', s)) {
-    s <- substr(s, 2L, nchar(s) - 1L)
+  if (length(s) == 0L) return(s)
+  q <- grepl('^".*"$', s)
+  if (any(q)) {
+    s[q] <- substr(s[q], 2L, nchar(s[q]) - 1L)
   }
-  s <- sub("^cfg_local\\$", "cfg$", s)
-  s
+  sub("^cfg_local\\$", "cfg$", s)
 }
 
 # Return function/operator name for simple calls, else "".
@@ -110,6 +111,10 @@ bp_extract_edges_from_handler <- function(handler_name, fn_expr) {
   input_stages <- character()
   rows <- list()
   model_refs <- character()
+  source_var_stages <- list()
+  last_output_stage <- NULL
+  pop_var_n <- list()
+  scalar_var_expr <- list()
 
   add_row <- function(from, to, event, details = "") {
     rows[[length(rows) + 1L]] <<- data.frame(
@@ -122,11 +127,109 @@ bp_extract_edges_from_handler <- function(handler_name, fn_expr) {
     )
   }
 
+  stages_from_expr <- function(expr) {
+    if (is.null(expr)) return(character())
+    txt <- bp_expr_to_text(expr)
+    out <- character()
+
+    # Literal stage strings.
+    lits <- unlist(regmatches(txt, gregexpr('"[^"]+"', txt, perl = TRUE)), use.names = FALSE)
+    if (length(lits) > 0L) {
+      lits <- gsub('^"|"$', "", lits)
+      out <- c(out, lits[nzchar(lits)])
+    }
+
+    # Variable references with $source_ids/$pop.
+    hits <- unlist(regmatches(
+      txt,
+      gregexpr("\\b([A-Za-z][A-Za-z0-9_.]*)\\s*\\$\\s*(source_ids|pop|source_rows)\\b", txt, perl = TRUE)
+    ), use.names = FALSE)
+    if (length(hits) > 0L) {
+      for (h in unique(hits)) {
+        v <- sub("\\s*\\$.*$", "", h)
+        if (!is.null(source_var_stages[[v]])) out <- c(out, source_var_stages[[v]])
+      }
+    }
+
+    # Bare symbol.
+    if (is.symbol(expr)) {
+      nm <- as.character(expr)
+      if (!is.null(source_var_stages[[nm]])) out <- c(out, source_var_stages[[nm]])
+    }
+
+    out <- bp_norm_label(out)
+    unique(out[nzchar(out) & out != "UNKNOWN"])
+  }
+
   walk <- function(x) {
     if (!is.call(x)) return(invisible(NULL))
     fn <- bp_call_name(x)
 
-    if (fn == "get_ready_pop") {
+    if (fn %in% c("<-", "=") && length(x) >= 3L) {
+      lhs <- x[[2L]]
+      rhs <- x[[3L]]
+      if (is.symbol(lhs) && is.call(rhs)) {
+        scalar_var_expr[[as.character(lhs)]] <<- bp_expr_to_text(rhs)
+        rhs_fn <- bp_call_name(rhs)
+        if (rhs_fn %in% c("select_latest_available", "get_ready_pop", "select_current")) {
+          stage_expr <- bp_call_arg(rhs, "stage", position = 2L)
+          if (!is.null(stage_expr)) {
+            st <- bp_norm_label(bp_expr_to_text(stage_expr))
+            st <- unique(st[nzchar(st)])
+            source_var_stages[[as.character(lhs)]] <<- st
+            input_stages <<- c(input_stages, st)
+          }
+        } else if (rhs_fn %in% c("select_top_or_random", "selectInd")) {
+          # Track selected-pop size expression for annotation (n=...).
+          n_expr <- bp_call_arg(rhs, "n", position = 2L)
+          if (!is.null(n_expr)) {
+            n_txt <- bp_expr_to_text(n_expr)
+            if (is.symbol(n_expr) && !is.null(scalar_var_expr[[as.character(n_expr)]])) {
+              n_txt <- scalar_var_expr[[as.character(n_expr)]]
+            }
+            pop_var_n[[as.character(lhs)]] <<- normalize_n_expr(n_txt)
+          }
+        } else if (rhs_fn == "pop_subset") {
+          # If idx is a sample/min expression, preserve compact text for n.
+          idx_expr <- bp_call_arg(rhs, "", position = 2L)
+          if (!is.null(idx_expr)) {
+            idx_txt <- bp_expr_to_text(idx_expr)
+            if (is.symbol(idx_expr) && !is.null(scalar_var_expr[[as.character(idx_expr)]])) {
+              idx_txt <- scalar_var_expr[[as.character(idx_expr)]]
+            }
+            # Resolve symbolic sample size if available (size=n and n <- ...).
+            msz <- regexec("size\\s*=\\s*([A-Za-z][A-Za-z0-9_.]*)", idx_txt)
+            rsz <- regmatches(idx_txt, msz)[[1L]]
+            if (length(rsz) >= 2L) {
+              nm <- rsz[2L]
+              if (!is.null(scalar_var_expr[[nm]])) {
+                idx_txt <- gsub(
+                  paste0("size\\s*=\\s*", nm),
+                  paste0("size=", scalar_var_expr[[nm]]),
+                  idx_txt
+                )
+              }
+            }
+            if (grepl("^sample\\.int\\(", idx_txt) || grepl("^seq_len\\(", idx_txt) || grepl("^head\\(", idx_txt) || grepl("^which\\(", idx_txt)) {
+              pop_var_n[[as.character(lhs)]] <<- normalize_n_expr(idx_txt)
+            }
+          }
+        } else if (rhs_fn == "bp_last_cohort_id" && !is.null(last_output_stage)) {
+          source_var_stages[[as.character(lhs)]] <<- last_output_stage
+        } else {
+          # Propagate stage provenance through local helper variables
+          # such as src_ids_block <- c(src_cb$source_ids, ...).
+          st <- stages_from_expr(rhs)
+          if (length(st) > 0L) {
+            source_var_stages[[as.character(lhs)]] <<- st
+          }
+        }
+      } else if (is.symbol(lhs)) {
+        scalar_var_expr[[as.character(lhs)]] <<- bp_expr_to_text(rhs)
+      }
+    }
+
+    if (fn %in% c("get_ready_pop", "select_latest_available", "select_current")) {
       stage_expr <- bp_call_arg(x, "stage", position = 2L)
       if (!is.null(stage_expr)) {
         input_stages <<- c(input_stages, bp_norm_label(bp_expr_to_text(stage_expr)))
@@ -171,6 +274,34 @@ bp_extract_edges_from_handler <- function(handler_name, fn_expr) {
         )
         details <- gsub("^;\\s*|;\\s*$", "", gsub(";\\s*;+", "; ", details))
         add_row(stage_in, stage_out, "phenotype_trial", details)
+      } else {
+        # Explicit-pop mode.
+        stage_out_expr <- bp_call_arg(x, "output_stage")
+        input_cohorts_expr <- bp_call_arg(x, "input_cohorts")
+        pop_expr <- bp_call_arg(x, "pop")
+        n_loc <- bp_call_arg(x, "n_loc")
+        reps <- bp_call_arg(x, "reps")
+        stage_out <- if (!is.null(stage_out_expr)) bp_norm_label(bp_expr_to_text(stage_out_expr)) else "UNKNOWN"
+        from_candidates <- stages_from_expr(input_cohorts_expr)
+        if (length(from_candidates) == 0L) {
+          from_candidates <- if (length(input_stages) > 0L) input_stages[length(input_stages)] else "UNKNOWN"
+        }
+        n_label <- NULL
+        if (is.symbol(pop_expr)) {
+          n_label <- pop_var_n[[as.character(pop_expr)]]
+        }
+        details <- paste(
+          c(
+            op_hint,
+            sel_hint,
+            if (!is.null(n_label)) paste0("n=", n_label) else "",
+            if (!is.null(n_loc)) paste0("loc=", bp_expr_to_text(n_loc)) else "",
+            if (!is.null(reps)) paste0("reps=", bp_expr_to_text(reps)) else ""
+          ),
+          collapse = "; "
+        )
+        details <- gsub("^;\\s*|;\\s*$", "", gsub(";\\s*;+", "; ", details))
+        for (fr in unique(from_candidates)) add_row(fr, stage_out, "phenotype_trial", details)
       }
     }
 
@@ -201,10 +332,19 @@ bp_extract_edges_from_handler <- function(handler_name, fn_expr) {
     if (fn == "put_stage_pop") {
       stage_out <- bp_call_arg(x, "stage", position = 3L)
       if (!is.null(stage_out)) {
-        from <- if (length(input_stages) > 0L) input_stages[length(input_stages)] else "UNKNOWN"
+        stage_out_norm <- bp_norm_label(bp_expr_to_text(stage_out))
+        src_expr <- bp_call_arg(x, "source")
+        src_ids_expr <- bp_call_arg(x, "source_ids")
+        from <- unique(c(stages_from_expr(src_expr), stages_from_expr(src_ids_expr)))
+        if (length(from) == 0L) {
+          from <- if (length(input_stages) > 0L) input_stages[length(input_stages)] else "UNKNOWN"
+        }
         details <- paste(c(op_hint, sel_hint), collapse = "; ")
         details <- gsub("^;\\s*|;\\s*$", "", gsub(";\\s*;+", "; ", details))
-        add_row(from, bp_norm_label(bp_expr_to_text(stage_out)), "stage_transition", details)
+        for (fr in unique(from)) {
+          add_row(fr, stage_out_norm, "stage_transition", details)
+        }
+        last_output_stage <<- stage_out_norm
       }
     }
 
@@ -373,3 +513,27 @@ bp_extract_scheme_network <- function(script_path, orchestrator = "run_one_year"
     dot = bp_network_to_dot(edge_df, title = basename(script_path))
   )
 }
+  normalize_n_expr <- function(txt) {
+    if (is.null(txt) || !nzchar(txt)) return(txt)
+    s <- gsub("\\s+", "", as.character(txt))
+    # min(as.integer(500),pop_n_ind(...)) -> 500
+    m <- regexec("^min\\(as\\.integer\\(([0-9]+)\\),", s)
+    r <- regmatches(s, m)[[1L]]
+    if (length(r) >= 2L) return(r[2L])
+    # min(500,pop_n_ind(...)) -> 500
+    m <- regexec("^min\\(([0-9]+),", s)
+    r <- regmatches(s, m)[[1L]]
+    if (length(r) >= 2L) return(r[2L])
+    # sample.int(...,size=500,...) -> 500
+    m <- regexec("size=([0-9]+)", s)
+    r <- regmatches(s, m)[[1L]]
+    if (length(r) >= 2L) return(r[2L])
+    # sample.int(...,size=min(as.integer(500),...),...) -> 500
+    m <- regexec("size=min\\(as\\.integer\\(([0-9]+)\\),", s)
+    r <- regmatches(s, m)[[1L]]
+    if (length(r) >= 2L) return(r[2L])
+    m <- regexec("size=min\\(([0-9]+),", s)
+    r <- regmatches(s, m)[[1L]]
+    if (length(r) >= 2L) return(r[2L])
+    txt
+  }

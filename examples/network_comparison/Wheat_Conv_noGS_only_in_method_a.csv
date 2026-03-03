@@ -1,1 +1,13 @@
 "from","to","edge_type","selection"
+"AYT","EYT1_SEED","cohort",NA
+"AYT","PARENT_AYT","cohort",NA
+"AYT_SEED","AYT","cohort",NA
+"CROSS_BLOCK","DH_BULK","cohort",NA
+"DH_BULK","HEADROW_EVAL","cohort",NA
+"EYT1","EYT2_SEED","cohort",NA
+"EYT1_SEED","EYT1","cohort",NA
+"EYT2_SEED","EYT2","cohort",NA
+"HEADROW_EVAL","HEADROW_SEL","cohort",NA
+"PARENT_AYT","CROSS_BLOCK","cohort",NA
+"PYT","AYT_SEED","cohort",NA
+"PYT","PARENT_PYT","cohort",NA

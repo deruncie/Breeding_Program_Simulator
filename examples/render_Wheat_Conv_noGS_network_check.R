@@ -24,6 +24,48 @@ scheme_id <- "Wheat_Conv_noGS"
 net <- bp_extract_scheme_network(script_path, orchestrator = orchestrator)
 raw_edges <- net$edges
 
+# Try to resolve cfg$... labels to default numeric values from the target script.
+cfg_value_map <- list()
+stage_n_map <- list()
+env_cfg <- new.env(parent = baseenv())
+Sys.setenv(BPS_SKIP_SCRIPT_ENTRY = "1")
+try(suppressWarnings(sys.source(script_path, envir = env_cfg)), silent = TRUE)
+if (exists("make_wheat_conv_nogs_cfg", envir = env_cfg, mode = "function")) {
+  cfg0 <- try(get("make_wheat_conv_nogs_cfg", envir = env_cfg)(), silent = TRUE)
+  if (!inherits(cfg0, "try-error") && is.list(cfg0)) {
+    for (nm in names(cfg0)) {
+      v <- cfg0[[nm]]
+      if (length(v) == 1L && (is.numeric(v) || is.character(v))) {
+        cfg_value_map[[paste0("cfg$", nm)]] <- as.character(v)
+      }
+    }
+  }
+}
+if (exists("run_wheat_conv_nogs", envir = env_cfg, mode = "function") &&
+    exists("make_wheat_conv_nogs_cfg", envir = env_cfg, mode = "function")) {
+  cfg0 <- try(get("make_wheat_conv_nogs_cfg", envir = env_cfg)(), silent = TRUE)
+  if (!inherits(cfg0, "try-error")) {
+    st <- NULL
+    sim_ok <- try(
+      suppressMessages(
+        capture.output({
+          st <- get("run_wheat_conv_nogs", envir = env_cfg)(n_fill_years = 10L, n_run_years = 0L, cfg = cfg0)
+        })
+      ),
+      silent = TRUE
+    )
+    if (!inherits(sim_ok, "try-error")) {
+      if (is.list(st) && !is.null(st$cohorts) && nrow(st$cohorts) > 0L) {
+        co <- st$cohorts[order(st$cohorts$created_tick, st$cohorts$cohort_id), , drop = FALSE]
+        latest <- co[!duplicated(co$stage, fromLast = TRUE), c("stage", "n_ind"), drop = FALSE]
+        for (i in seq_len(nrow(latest))) {
+          stage_n_map[[as.character(latest$stage[i])]] <- as.character(latest$n_ind[i])
+        }
+      }
+    }
+  }
+}
+
 if (nrow(raw_edges) == 0L) stop("No edges extracted from scheme.", call. = FALSE)
 
 cat("Handlers in orchestrator order:\n")
@@ -166,22 +208,60 @@ nodes_df <- data.frame(
 
 trial_in <- raw_edges[raw_edges$event == "phenotype_trial", c("to_stage", "details"), drop = FALSE]
 extract_field <- function(details, key) {
-  m <- regexec(paste0("(^|;\\s*)", key, "=([^; ]+)"), details)
+  m <- regexec(paste0("(^|;\\s*)", key, "=([^;]+)"), details)
   r <- regmatches(details, m)[[1L]]
-  if (length(r) >= 3L) return(r[3L])
+  if (length(r) >= 3L) return(trimws(r[3L]))
   NA_character_
+}
+
+normalize_n_value <- function(n_txt) {
+  if (is.na(n_txt) || !nzchar(n_txt)) return(n_txt)
+  s <- gsub("\\s+", "", n_txt)
+  m <- regexec("^min\\(as\\.integer\\(([0-9]+)\\),", s)
+  r <- regmatches(s, m)[[1L]]
+  if (length(r) >= 2L) return(r[2L])
+  m <- regexec("^min\\(as\\.integer\\((cfg\\$[A-Za-z0-9_]+)\\),", s)
+  r <- regmatches(s, m)[[1L]]
+  if (length(r) >= 2L) {
+    k <- r[2L]
+    if (!is.null(cfg_value_map[[k]])) return(cfg_value_map[[k]])
+    return(k)
+  }
+  m <- regexec("^min\\(([0-9]+),", s)
+  r <- regmatches(s, m)[[1L]]
+  if (length(r) >= 2L) return(r[2L])
+  m <- regexec("size=([0-9]+)", s)
+  r <- regmatches(s, m)[[1L]]
+  if (length(r) >= 2L) return(r[2L])
+  m <- regexec("size=min\\(as\\.integer\\((cfg\\$[A-Za-z0-9_]+)\\),", s)
+  r <- regmatches(s, m)[[1L]]
+  if (length(r) >= 2L) {
+    k <- r[2L]
+    if (!is.null(cfg_value_map[[k]])) return(cfg_value_map[[k]])
+    return(k)
+  }
+  m <- regexec("size=min\\(as\\.integer\\(([0-9]+)\\),", s)
+  r <- regmatches(s, m)[[1L]]
+  if (length(r) >= 2L) return(r[2L])
+  n_txt
 }
 
 nodes_df$annotation <- ""
 for (i in seq_len(nrow(nodes_df))) {
   nm <- nodes_df$name[i]
   rows <- trial_in[trial_in$to_stage == nm, , drop = FALSE]
-  if (nrow(rows) == 0L) next
+  if (nrow(rows) == 0L) {
+    if (!is.null(stage_n_map[[nm]])) {
+      nodes_df$annotation[i] <- paste0("n=", stage_n_map[[nm]])
+    }
+    next
+  }
 
   ann <- unique(vapply(seq_len(nrow(rows)), function(k) {
     d <- as.character(rows$details[k])
     sel <- extract_selection(d)
     n <- extract_field(d, "n")
+    n <- normalize_n_value(n)
     loc <- extract_field(d, "loc")
     rep <- extract_field(d, "reps")
     parts <- c()
@@ -193,6 +273,9 @@ for (i in seq_len(nrow(nodes_df))) {
   }, character(1)))
   ann <- ann[nzchar(ann)]
   if (length(ann) > 0L) nodes_df$annotation[i] <- paste(ann, collapse = "\n")
+  if (!is.null(stage_n_map[[nm]]) && !grepl("(^|\\n)n=", nodes_df$annotation[i])) {
+    nodes_df$annotation[i] <- paste(c(nodes_df$annotation[i], paste0("n=", stage_n_map[[nm]])), collapse = "\n")
+  }
 }
 
 nodes_df$label <- ifelse(
@@ -210,6 +293,13 @@ edges_df <- data.frame(
 
 graph <- tidygraph::tbl_graph(nodes = nodes_df, edges = edges_df, directed = TRUE)
 layout_tbl <- ggraph::create_layout(graph, layout = "sugiyama")
+xr <- range(layout_tbl$x, na.rm = TRUE)
+yr <- range(layout_tbl$y, na.rm = TRUE)
+xpad <- 0.5
+ypad <- 0.5
+max_lab_chars <- max(nchar(nodes_df$label), na.rm = TRUE)
+plot_w <- max(8, 7 + 0.035 * max_lab_chars)
+plot_h <- max(9, diff(yr) + 3)
 
 p <- ggraph::ggraph(layout_tbl) +
   ggraph::geom_edge_fan(
@@ -229,6 +319,11 @@ p <- ggraph::ggraph(layout_tbl) +
   ggraph::scale_edge_color_manual(values = c(cohort = "#2e7d32")) +
   ggplot2::scale_fill_manual(values = c(cohort = "white")) +
   ggplot2::theme_void() +
+  ggplot2::coord_cartesian(
+    xlim = c(xr[1] - xpad, xr[2] + xpad),
+    ylim = c(yr[1] - ypad, yr[2] + ypad),
+    clip = "off"
+  ) +
   ggplot2::theme(
     panel.background = ggplot2::element_rect(fill = "white", color = NA),
     plot.background = ggplot2::element_rect(fill = "white", color = NA),
@@ -239,8 +334,8 @@ p <- ggraph::ggraph(layout_tbl) +
 
 png_out <- file.path("examples", paste0(scheme_id, "_network_ggraph.png"))
 pdf_out <- file.path("examples", paste0(scheme_id, "_network_ggraph.pdf"))
-ggplot2::ggsave(filename = png_out, plot = p, width = 8, height = 9, dpi = 200, bg = "white")
-ggplot2::ggsave(filename = pdf_out, plot = p, width = 8, height = 9, device = grDevices::cairo_pdf, bg = "white")
+ggplot2::ggsave(filename = png_out, plot = p, width = plot_w, height = plot_h, dpi = 200, bg = "white", limitsize = FALSE)
+ggplot2::ggsave(filename = pdf_out, plot = p, width = plot_w, height = plot_h, device = grDevices::cairo_pdf, bg = "white", limitsize = FALSE)
 
 cat("\nWrote network plots:\n")
 cat(" -", png_out, "\n")
