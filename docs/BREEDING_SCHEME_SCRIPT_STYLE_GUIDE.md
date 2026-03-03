@@ -36,7 +36,6 @@ Each event verb should follow this readable pattern:
 ```r
 chk <- bp_skip_if_no_input(state, input_obj, cfg)
 if (chk$skip) return(chk$state)
-state <- chk$state
 ```
 
 3. Run explicit stage logic in ordinary R/AlphaSimR code. This may include:
@@ -94,6 +93,8 @@ Missing-input behavior should log by default and can be made strict with config:
 
 - Use meaningful object names (`input_pyt`, `selected_ayt`, `next_cross_block`).
 - Keep event functions short enough to read top-to-bottom.
+- Keep stage/event names in event verbs (for example `"PI_CAND"`, `"PD_DH_INPUT"`, `"PYT"`), not in `cfg`.
+- Use `cfg` for numeric, timing, and model parameters.
 - Keep cfg values near use-sites when that improves clarity.
 - Do not expose internal state-table plumbing in high-level event code.
 
