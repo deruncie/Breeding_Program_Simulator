@@ -15,7 +15,6 @@ update_parents_and_cross_to_F1_local <- function(state, cfg) {
   input_parents <- select_latest_available(state, stage = cfg$input_stage, combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_parents, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   n_par <- pop_n_ind(input_parents$pop)
   plan <- matrix(sample.int(n_par, size = as.integer(cfg$n_crosses) * 2L, replace = TRUE), ncol = 2L)
@@ -74,7 +73,6 @@ select_from_F5_and_run_PYT_local <- function(state, cfg) {
   input_f5 <- select_latest_available(state, stage = cfg$input_stage, combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_f5, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   run_phenotype_trial(
     state = state,
     pop = input_f5$pop,
@@ -95,7 +93,6 @@ select_from_PYT_and_recycle_parents_local <- function(state, cfg) {
   input_pyt <- select_latest_available(state, stage = cfg$input_stage, combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_pyt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   model <- state$gs_models[[cfg$model_id]]
   if (is.null(model)) return(state)
 

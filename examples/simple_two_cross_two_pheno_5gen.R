@@ -98,7 +98,6 @@ select_from_PARENT_and_run_F1 <- function(state, cfg) {
   input_parent <- select_latest_available(state, stage = cfg$input_stage, stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_parent, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   pop_in <- input_parent$pop
   n_par <- pop_n_ind(pop_in)
@@ -135,7 +134,6 @@ select_from_F1_and_run_F2 <- function(state, cfg) {
   input_f1 <- select_latest_available(state, stage = cfg$input_stage, stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_f1, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   pop_in <- input_f1$pop
   n_par <- pop_n_ind(pop_in)
@@ -172,7 +170,6 @@ select_from_F2_and_run_PYT <- function(state, cfg) {
   input_f2 <- select_latest_available(state, stage = cfg$input_stage, stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_f2, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   run_phenotype_trial(
     state = state,
     pop = input_f2$pop,
@@ -196,7 +193,6 @@ select_from_PYT_and_run_AYT <- function(state, cfg) {
   input_pyt <- select_latest_available(state, stage = cfg$input_stage, stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_pyt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   run_phenotype_trial(
     state = state,
     pop = input_pyt$pop,

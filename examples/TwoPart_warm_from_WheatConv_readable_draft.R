@@ -239,7 +239,7 @@ seed_pi_from_warm_state <- function(state, cfg) {
   state <- put_stage_pop(
     state = state,
     pop = pi_seed,
-    stage = cfg$pi_candidate_stage,
+    stage = "PI_CAND",
     source = input_seed_source,
     ready_in_years = 0,
     stream = "main",
@@ -255,7 +255,7 @@ select_from_PI_and_cross_next_PI_cycle <- function(state, cfg, cycle_label) {
   bp_debug_break(state, cfg)
 
   state <- run_genotyping(state, list(
-    input_stage = cfg$pi_candidate_stage,
+    input_stage = "PI_CAND",
     stream = "main",
     input_policy = "latest_one",
     include_not_ready = TRUE,
@@ -267,14 +267,13 @@ select_from_PI_and_cross_next_PI_cycle <- function(state, cfg, cycle_label) {
 
   input_pi <- select_latest_available(
     state = state,
-    stage = cfg$pi_candidate_stage,
+    stage = "PI_CAND",
     stream = "main",
     combine = TRUE,
     silent = TRUE
   )
   chk <- bp_skip_if_no_input(state, input_pi, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   pop <- input_pi$pop
   n_total <- pop_n_ind(pop)
@@ -350,7 +349,7 @@ select_from_PI_and_cross_next_PI_cycle <- function(state, cfg, cycle_label) {
   state <- put_stage_pop(
     state = state,
     pop = pi_next,
-    stage = cfg$pi_candidate_stage,
+    stage = "PI_CAND",
     source = input_pi,
     ready_in_years = cfg$pi_cycle_duration_years,
     stream = "main",
@@ -363,7 +362,7 @@ select_from_PI_and_cross_next_PI_cycle <- function(state, cfg, cycle_label) {
   )
   state <- add_stage_cost(
     state = state,
-    stage = cfg$pi_candidate_stage,
+    stage = "PI_CAND",
     event = "pi_crossing",
     unit = "cross",
     n = nrow(cross_plan),
@@ -373,7 +372,7 @@ select_from_PI_and_cross_next_PI_cycle <- function(state, cfg, cycle_label) {
   state <- put_stage_pop(
     state = state,
     pop = dh_seed,
-    stage = cfg$pd_dh_input_stage,
+    stage = "PD_DH_INPUT",
     source = input_pi,
     ready_in_years = cfg$pi_cycle_duration_years,
     stream = "main",
@@ -391,7 +390,7 @@ advance_PD_seed_to_DH <- function(state, cfg) {
 
   input_pd_seed <- get_ready_pop(
     state = state,
-    stage = cfg$pd_dh_input_stage,
+    stage = "PD_DH_INPUT",
     stream = "main",
     policy = "all_ready",
     combine = TRUE,
@@ -399,7 +398,6 @@ advance_PD_seed_to_DH <- function(state, cfg) {
   )
   chk <- bp_skip_if_no_input(state, input_pd_seed, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   seeds <- input_pd_seed$pop
   n_per_family <- as.integer(cfg$seeds_to_dh_per_family)
@@ -442,7 +440,6 @@ select_from_DH_and_run_headrow <- function(state, cfg) {
   input_dh <- select_latest_available(state, stage = "DH_BULK", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_dh, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   n <- min(as.integer(cfg$n_headrow_advance), pop_n_ind(input_dh$pop))
   idx <- sample.int(pop_n_ind(input_dh$pop), size = n, replace = FALSE)
@@ -470,7 +467,6 @@ select_from_headrow_and_run_PYT <- function(state, cfg) {
   input_headrow <- select_latest_available(state, stage = "HEADROW_SEL", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_headrow, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   n <- min(as.integer(cfg$n_pyt), pop_n_ind(input_headrow$pop))
   idx <- sample.int(pop_n_ind(input_headrow$pop), size = n, replace = FALSE)
@@ -498,7 +494,6 @@ select_from_PYT_and_run_AYT <- function(state, cfg) {
   input_pyt <- select_latest_available(state, stage = "PYT", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_pyt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   n <- min(as.integer(cfg$n_pyt_to_ayt), pop_n_ind(input_pyt$pop))
   ph <- input_pyt$pop@pheno
@@ -532,7 +527,6 @@ select_from_AYT_and_run_EYT1 <- function(state, cfg) {
   input_ayt <- select_latest_available(state, stage = "AYT", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_ayt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   n <- min(as.integer(cfg$n_ayt_to_eyt), pop_n_ind(input_ayt$pop))
   ph <- input_ayt$pop@pheno
@@ -566,7 +560,6 @@ select_from_EYT1_and_run_EYT2 <- function(state, cfg) {
   input_eyt1 <- select_latest_available(state, stage = "EYT1", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_eyt1, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   run_phenotype_trial(
     state = state,
@@ -591,7 +584,6 @@ select_from_EYT_and_release_Variety <- function(state, cfg) {
   input_eyt2 <- select_latest_available(state, stage = "EYT2", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_eyt2, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   pop <- input_eyt2$pop
 
@@ -672,7 +664,7 @@ genotype_PD_and_update_GP_model <- function(state, cfg) {
   ))
 
   state <- run_train_gp_model(state, list(
-    from_stage = cfg$gp_training_from_stage,
+    from_stage = "PYT",
     stream = "main",
     chip = cfg$snp_chip,
     trait = cfg$ebv_trait,
@@ -726,8 +718,8 @@ run_one_year <- function(state, cfg, year_index) {
     year_index,
     state$time$t,
     sum(state$cohorts$active),
-    nrow(bp_get_ready_cohorts(state, stage = cfg$pi_candidate_stage, stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)),
-    nrow(bp_get_ready_cohorts(state, stage = cfg$pd_dh_input_stage, stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)),
+    nrow(bp_get_ready_cohorts(state, stage = "PI_CAND", stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)),
+    nrow(bp_get_ready_cohorts(state, stage = "PD_DH_INPUT", stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)),
     nrow(bp_get_ready_cohorts(state, stage = "DH_BULK", stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)),
     nrow(bp_get_ready_cohorts(state, stage = "HEADROW_SEL", stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)),
     nrow(bp_get_ready_cohorts(state, stage = "PYT", stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)),
@@ -752,12 +744,9 @@ make_two_part_cfg <- function() {
     debug_where = NULL,
 
     # Warm-start
-    warm_seed_stage = "PYT",
     pi_seed_n = 2000L,
 
     # PI
-    pi_candidate_stage = "PI_CAND",
-    pd_dh_input_stage = "PD_DH_INPUT",
     model_id = "gp_pi_main",
     ebv_trait = 1L,
     n_female_select = 100L,
@@ -790,7 +779,6 @@ make_two_part_cfg <- function() {
     pi_genotyping_duration_years = 0,
     geno_duration_years = 0.5,
     gp_lookback_years = 2,
-    gp_training_from_stage = "PYT",
     enable_network_render = FALSE,
 
     # Placeholder costs
@@ -846,7 +834,7 @@ init_two_part_from_wheat_conv <- function(warm_years = 20L, cfg = make_two_part_
   ))
 
   state <- run_train_gp_model(state, list(
-    from_stage = cfg$gp_training_from_stage,
+    from_stage = "PYT",
     stream = "main",
     chip = cfg$snp_chip,
     trait = cfg$ebv_trait,

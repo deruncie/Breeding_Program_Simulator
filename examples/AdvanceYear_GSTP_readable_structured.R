@@ -36,7 +36,6 @@ select_from_RC_and_cross_next_RC_tick <- function(state, cfg) {
   input_rc <- select_latest_available(state, stage = cfg$rc_stage, stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_rc, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   pop <- input_rc$pop
   model <- state$gs_models[[cfg$model_id]]
@@ -78,7 +77,6 @@ initialize_RC_from_PYT_if_missing <- function(state, cfg) {
   input_pyt <- select_latest_available(state, stage = "PYT", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_pyt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   n <- min(cfg$rc_init_n, pop_n_ind(input_pyt$pop))
   idx <- sample.int(pop_n_ind(input_pyt$pop), size = n, replace = FALSE)
@@ -111,7 +109,6 @@ select_from_RC_and_send_to_DH <- function(state, cfg) {
   input_rc <- select_latest_available(state, stage = cfg$rc_stage, stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_rc, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   pop <- input_rc$pop
   model <- state$gs_models[[cfg$model_id]]
@@ -145,7 +142,6 @@ select_from_DH_and_run_PYT <- function(state, cfg) {
   input_dh <- select_latest_available(state, stage = cfg$dh_stage, stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_dh, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   n <- min(as.integer(cfg$n_pyt), pop_n_ind(input_dh$pop))
   idx <- sample.int(pop_n_ind(input_dh$pop), size = n, replace = FALSE)
   pyt_pop <- pop_subset(input_dh$pop, idx)
@@ -200,7 +196,6 @@ select_from_PYT_and_run_AYT <- function(state, cfg) {
   input_pyt <- select_latest_available(state, stage = "PYT", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_pyt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   pop_in <- input_pyt$pop
   model <- state$gs_models[[cfg$model_id]]
   pop_scored <- if (is.null(model)) {
@@ -249,7 +244,6 @@ select_from_AYT_and_run_EYT <- function(state, cfg) {
   input_ayt <- select_latest_available(state, stage = "AYT", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_ayt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   n <- min(cfg$n_eyt, pop_n_ind(input_ayt$pop))
   eyt_pop <- selectInd(input_ayt$pop, nInd = n, use = "pheno", simParam = state$sim$SP)
 
@@ -280,7 +274,6 @@ select_from_EYT_and_release_Variety <- function(state, cfg) {
   input_eyt <- select_latest_available(state, stage = "EYT", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_eyt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   variety <- selectInd(input_eyt$pop, nInd = 1, use = "pheno", simParam = state$sim$SP)
   old_var <- bp_get_ready_cohorts(state, stage = "Variety", stream = "main", active_only = TRUE, as_of_tick = .Machine$integer.max)

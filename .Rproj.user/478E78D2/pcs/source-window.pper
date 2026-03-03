@@ -4,36 +4,22 @@
             "ordinal": 3,
             "x": 271,
             "y": 121,
-            "width": 849,
+            "width": 850,
             "height": 605
         },
         "wggl2dybxgvdk": {
             "ordinal": 4,
-            "x": 305,
-            "y": 33,
-            "width": 897,
-            "height": 573
+            "x": 188,
+            "y": 30,
+            "width": 1099,
+            "height": 814
         },
         "wetedcmmgiwh0": {
             "ordinal": 5,
             "x": 0,
-            "y": 33,
-            "width": 1165,
-            "height": 733
-        },
-        "wsz0pmpet28nx": {
-            "ordinal": 6,
-            "x": 641,
-            "y": 62,
-            "width": 595,
-            "height": 625
-        },
-        "wqt68mterbt5n": {
-            "ordinal": 8,
-            "x": 208,
-            "y": 36,
-            "width": 925,
-            "height": 707
+            "y": 30,
+            "width": 1536,
+            "height": 814
         }
     }
 }

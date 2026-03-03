@@ -1,5 +1,12 @@
 "from","to","edge_type","selection"
-"UNKNOWN","CROSS_BLOCK","cohort",NA
-"UNKNOWN","CROSS_SEED","cohort",NA
-"UNKNOWN","DH_BULK","cohort",NA
-"UNKNOWN","Variety","cohort",NA
+"AYT","CROSS_BLOCK","cohort",NA
+"AYT","EYT1","cohort",NA
+"CROSS_BLOCK","CROSS_BLOCK","cohort",NA
+"CROSS_BLOCK","CROSS_SEED","cohort",NA
+"CROSS_SEED","DH_BULK","cohort",NA
+"DH_BULK","HEADROW_SEL","cohort",NA
+"EYT1","EYT2","cohort",NA
+"EYT2","Variety","cohort",NA
+"HEADROW_SEL","PYT","cohort","random"
+"PYT","AYT","cohort",NA
+"PYT","CROSS_BLOCK","cohort",NA

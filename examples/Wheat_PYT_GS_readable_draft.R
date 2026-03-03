@@ -210,7 +210,6 @@ advance_F1_to_DH <- function(state, cfg) {
   input_cross_seed <- select_latest_available(state, stage = "CROSS_SEED", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_cross_seed, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   dh <- makeDH(input_cross_seed$pop, nDH = as.integer(cfg$dh_per_family), simParam = state$sim$SP)
   state <- put_stage_pop(
@@ -239,7 +238,6 @@ select_from_DH_and_run_headrow <- function(state, cfg) {
   input_dh <- select_latest_available(state, stage = "DH_BULK", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_dh, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   n <- min(as.integer(cfg$n_headrow_advance), pop_n_ind(input_dh$pop))
   ph <- input_dh$pop@pheno
   idx <- if (is.null(ph)) {
@@ -272,7 +270,6 @@ select_from_headrow_and_run_PYT <- function(state, cfg) {
   input_headrow <- select_latest_available(state, stage = "HEADROW_SEL", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_headrow, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   n <- min(as.integer(cfg$n_pyt), pop_n_ind(input_headrow$pop))
   idx <- sample.int(pop_n_ind(input_headrow$pop), size = n, replace = FALSE)
   pop_sel <- pop_subset(input_headrow$pop, idx)
@@ -350,7 +347,6 @@ select_from_PYT_and_run_AYT <- function(state, cfg) {
   input_pyt <- select_latest_available(state, stage = "PYT", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_pyt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   n <- min(as.integer(cfg$n_pyt_to_ayt), pop_n_ind(input_pyt$pop))
   score <- score_pop_for_selection(input_pyt$pop, prefer_ebv = TRUE, ebv_trait = cfg$ebv_trait)
   idx <- select_top_idx(score, n)
@@ -378,7 +374,6 @@ select_from_AYT_and_run_EYT1 <- function(state, cfg) {
   input_ayt <- select_latest_available(state, stage = "AYT", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_ayt, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   n <- min(as.integer(cfg$n_ayt_to_eyt), pop_n_ind(input_ayt$pop))
   score <- score_pop_for_selection(input_ayt$pop, prefer_ebv = TRUE, ebv_trait = cfg$ebv_trait)
   idx <- select_top_idx(score, n)
@@ -406,7 +401,6 @@ select_from_EYT1_and_run_EYT2 <- function(state, cfg) {
   input_eyt1 <- select_latest_available(state, stage = "EYT1", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_eyt1, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
   run_phenotype_trial(
     state = state,
     pop = input_eyt1$pop,
@@ -429,7 +423,6 @@ select_from_EYT_and_release_Variety <- function(state, cfg) {
   input_eyt2 <- select_latest_available(state, stage = "EYT2", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, input_eyt2, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   pop <- input_eyt2$pop
   ph <- state$phenotype_log
@@ -489,7 +482,6 @@ update_parents_and_cross_to_F1 <- function(state, cfg) {
   src_cb <- select_latest_available(state, stage = "CROSS_BLOCK", stream = "main", combine = TRUE, silent = TRUE)
   chk <- bp_skip_if_no_input(state, src_cb, cfg)
   if (chk$skip) return(chk$state)
-  state <- chk$state
 
   rows_pyt <- get_active_stage_rows(state, "PYT")
   rows_ayt <- get_active_stage_rows(state, "AYT")
