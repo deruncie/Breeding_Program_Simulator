@@ -47,6 +47,37 @@ test_that("select_latest_available supports n and preserves source ids", {
   )
 })
 
+test_that("select_latest_available can include not-ready active cohorts", {
+  state <- BreedingProgramSimulator:::bp_init_state(
+    SP = NULL,
+    dt = 1,
+    start_time = 0,
+    sim = list(default_chip = 1L)
+  )
+
+  state <- BreedingProgramSimulator:::bp_add_cohort(state, data.frame(v = 1:2), stage = "PYT", duration_years = 2)
+  newest_id <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+
+  expect_null(
+    BreedingProgramSimulator:::select_latest_available(
+      state,
+      stage = "PYT",
+      combine = TRUE,
+      silent = TRUE
+    )
+  )
+
+  src <- BreedingProgramSimulator:::select_latest_available(
+    state,
+    stage = "PYT",
+    combine = TRUE,
+    include_not_ready = TRUE,
+    silent = TRUE
+  )
+  expect_equal(src$source_ids[[1]], newest_id)
+  expect_equal(nrow(src$pop), 2L)
+})
+
 test_that("run_genotyping is idempotent for same cohort and chip", {
   state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0, sim = list(default_chip = 1L))
 

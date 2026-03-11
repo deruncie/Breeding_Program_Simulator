@@ -765,6 +765,8 @@ bp_skip_if_no_input <- function(state, input_obj, cfg, event_name = NULL) {
 #' @param cycle_id Optional cycle id.
 #' @param input_cycle_ids Optional cycle id vector.
 #' @param select_source_cohorts_fn Custom source selector for `policy = "custom"`.
+#' @param include_not_ready If `TRUE`, search active cohorts regardless of
+#'   `available_tick`. Default `FALSE`.
 #' @param silent Suppress no-ready messages.
 #' @param fail_if_no_ready Error when no cohorts are eligible.
 #'
@@ -780,6 +782,7 @@ get_ready_pop <- function(
   cycle_id = NULL,
   input_cycle_ids = NULL,
   select_source_cohorts_fn = NULL,
+  include_not_ready = FALSE,
   silent = FALSE,
   fail_if_no_ready = FALSE
 ) {
@@ -789,10 +792,22 @@ get_ready_pop <- function(
     cycle_id = cycle_id,
     input_cycle_ids = input_cycle_ids,
     select_source_cohorts_fn = select_source_cohorts_fn,
+    include_not_ready = isTRUE(include_not_ready),
     silent = isTRUE(silent),
     fail_if_no_ready = isTRUE(fail_if_no_ready)
   )
-  ready <- bp_get_ready_cohorts(state, stage = stage, stream = stream)
+  ready <- if (isTRUE(include_not_ready)) {
+    df <- state$cohorts
+    if (!is.null(stage)) {
+      df <- df[df$stage %in% stage, , drop = FALSE]
+    }
+    if (!is.null(stream)) {
+      df <- df[df$stream %in% stream, , drop = FALSE]
+    }
+    df[df$active, , drop = FALSE]
+  } else {
+    bp_get_ready_cohorts(state, stage = stage, stream = stream)
+  }
   if (nrow(ready) == 0L) {
     bp_handle_no_ready(cfg, "get_ready_pop", stage)
     return(NULL)
@@ -828,6 +843,8 @@ get_ready_pop <- function(
 #' @param stream Optional stream filter.
 #' @param n Number of latest ready cohorts to select. Default `1L`.
 #' @param combine Whether to merge selected pops.
+#' @param include_not_ready If `TRUE`, search active cohorts regardless of
+#'   `available_tick`. Default `FALSE`.
 #' @param silent Suppress no-ready messages.
 #' @param fail_if_no_ready Error when no cohorts are eligible.
 #'
@@ -839,6 +856,7 @@ select_latest_available <- function(
   stream = NULL,
   n = 1L,
   combine = TRUE,
+  include_not_ready = FALSE,
   silent = FALSE,
   fail_if_no_ready = FALSE
 ) {
@@ -857,6 +875,7 @@ select_latest_available <- function(
     policy = if (n == 1L) "latest_one" else "latest_n",
     combine = combine,
     input_n = if (n == 1L) NULL else n,
+    include_not_ready = include_not_ready,
     silent = silent,
     fail_if_no_ready = fail_if_no_ready
   )
@@ -873,6 +892,8 @@ select_latest_available <- function(
 #' @param policy Source selection policy (default `"latest_one"`).
 #' @param combine Whether to merge selected pops.
 #' @param bundle Return source bundle instead of pop.
+#' @param include_not_ready If `TRUE`, search active cohorts regardless of
+#'   `available_tick`. Default `FALSE`.
 #' @param silent Suppress no-ready messages.
 #' @param fail_if_no_ready Error when no cohorts are eligible.
 #'
@@ -885,6 +906,7 @@ select_current <- function(
   policy = "latest_one",
   combine = TRUE,
   bundle = FALSE,
+  include_not_ready = FALSE,
   silent = TRUE,
   fail_if_no_ready = FALSE
 ) {
@@ -894,6 +916,7 @@ select_current <- function(
     stream = stream,
     policy = policy,
     combine = combine,
+    include_not_ready = include_not_ready,
     silent = silent,
     fail_if_no_ready = fail_if_no_ready
   )
@@ -1524,17 +1547,29 @@ run_phenotype_trial <- function(
         pop_trial@pheno[,] <- pheno_mean
       }
     } else {
-      reps_eff <- as.integer(max(1L, reps * n_loc))
-      pop_trial <- AlphaSimR::setPheno(
-        pop_trial,
-        varE = as.numeric(varE),
-        reps = reps_eff,
-        traits = traits,
-        simParam = state$sim$SP
-      )
-      env_pheno <- NULL
+      env_pheno <- vector("list", n_loc)
+      for (e in seq_len(n_loc)) {
+        env_pheno[[e]] <- AlphaSimR::setPheno(
+          pop_trial,
+          varE = as.numeric(varE),
+          reps = reps,
+          traits = traits,
+          onlyPheno = TRUE,
+          simParam = state$sim$SP
+        )
+        if (is.null(dim(env_pheno[[e]]))) {
+          env_pheno[[e]] <- matrix(env_pheno[[e]], ncol = length(traits))
+        }
+      }
+      pheno_mean <- Reduce("+", env_pheno) / n_loc
+      if (length(traits) == 1L) {
+        pop_trial@pheno[] <- as.numeric(pheno_mean[, 1L])
+      } else {
+        pop_trial@pheno[,] <- pheno_mean
+      }
       p_env <- rep(NA_real_, n_loc)
     }
+
 
     src_cycle <- {
       if (length(source_ids) == 0L) {
