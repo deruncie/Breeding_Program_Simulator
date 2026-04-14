@@ -11,6 +11,7 @@ select_current(
   policy = "latest_one",
   combine = TRUE,
   bundle = FALSE,
+  include_not_ready = FALSE,
   silent = TRUE,
   fail_if_no_ready = FALSE
 )
@@ -27,6 +28,9 @@ select_current(
 \item{combine}{Whether to merge selected pops.}
 
 \item{bundle}{Return source bundle instead of pop.}
+
+\item{include_not_ready}{If `TRUE`, search active cohorts regardless of
+`available_tick`. Default `FALSE`.}
 
 \item{silent}{Suppress no-ready messages.}
 

@@ -14,6 +14,7 @@ get_ready_pop(
   cycle_id = NULL,
   input_cycle_ids = NULL,
   select_source_cohorts_fn = NULL,
+  include_not_ready = FALSE,
   silent = FALSE,
   fail_if_no_ready = FALSE
 )
@@ -36,6 +37,9 @@ get_ready_pop(
 \item{input_cycle_ids}{Optional cycle id vector.}
 
 \item{select_source_cohorts_fn}{Custom source selector for `policy = "custom"`.}
+
+\item{include_not_ready}{If `TRUE`, search active cohorts regardless of
+`available_tick`. Default `FALSE`.}
 
 \item{silent}{Suppress no-ready messages.}
 

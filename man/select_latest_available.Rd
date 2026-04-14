@@ -10,6 +10,7 @@ select_latest_available(
   stream = NULL,
   n = 1L,
   combine = TRUE,
+  include_not_ready = FALSE,
   silent = FALSE,
   fail_if_no_ready = FALSE
 )
@@ -24,6 +25,9 @@ select_latest_available(
 \item{n}{Number of latest ready cohorts to select. Default `1L`.}
 
 \item{combine}{Whether to merge selected pops.}
+
+\item{include_not_ready}{If `TRUE`, search active cohorts regardless of
+`available_tick`. Default `FALSE`.}
 
 \item{silent}{Suppress no-ready messages.}
 
