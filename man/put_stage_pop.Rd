@@ -16,7 +16,10 @@ put_stage_pop(
   active = TRUE,
   inherit_genotypes = FALSE,
   selection_strategy = NA_character_,
-  cross_strategy = NA_character_
+  cross_strategy = NA_character_,
+  cost_per_individual = NULL,
+  cost_event = "cohort_creation",
+  cost_unit = "individual"
 )
 }
 \arguments{
@@ -45,6 +48,12 @@ this overrides ids inferred from `source`.}
 \item{selection_strategy}{Optional human-readable selection mechanism text.}
 
 \item{cross_strategy}{Optional human-readable crossing mechanism text.}
+
+\item{cost_per_individual}{Optional cost logged once per individual in `pop`.}
+
+\item{cost_event}{Event label used when `cost_per_individual` is provided.}
+
+\item{cost_unit}{Unit label used when `cost_per_individual` is provided.}
 }
 \value{
 Updated program state.

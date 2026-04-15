@@ -669,6 +669,28 @@ test_that("put_stage_pop accepts source_ids and strategy text", {
   expect_true(any(state$event_log$output_id == cid & state$event_log$event_type == "stage_output"))
 })
 
+test_that("put_stage_pop can log per-individual cohort creation cost", {
+  state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
+  state <- BreedingProgramSimulator:::put_stage_pop(
+    state = state,
+    pop = data.frame(v = 1:4),
+    stage = "F1",
+    ready_in_years = 0,
+    cost_per_individual = 0.5,
+    cost_event = "grow_out",
+    cost_unit = "plant"
+  )
+
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  rows <- subset(state$cost_log, cohort_id == cid & event == "grow_out")
+  expect_equal(nrow(rows), 1L)
+  expect_equal(rows$stage[[1]], "F1")
+  expect_equal(rows$unit[[1]], "plant")
+  expect_equal(rows$n_units[[1]], 4)
+  expect_equal(rows$unit_cost[[1]], 0.5)
+  expect_equal(rows$total_cost[[1]], 2.0)
+})
+
 test_that("bp_record_pheno supports sparse matrices and trait names", {
   state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
 
@@ -759,4 +781,42 @@ test_that("bp_record_pheno supports sparse matrices and trait names", {
     ),
     "not compatible with ncol\\(pheno_matrix\\)"
   )
+})
+
+test_that("run_phenotype_trial converts latent environment values to AlphaSimR p scale", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  founder <- quickHaplo(nInd = 20, nChr = 1, segSites = 50)
+  SP <- SimParam$new(founder)
+  SP$addTraitA(10)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  pop <- newPop(founder, simParam = SP)
+  state <- BreedingProgramSimulator:::put_stage_pop(state, pop, stage = "F5", ready_in_years = 0)
+  src <- BreedingProgramSimulator:::select_latest_available(state, stage = "F5", combine = TRUE, silent = TRUE)
+
+  state <- BreedingProgramSimulator:::run_phenotype_trial(
+    state = state,
+    pop = src$pop,
+    output_stage = "PYT",
+    input_cohorts = src$source_ids,
+    selection_strategy = "all",
+    traits = 1L,
+    n_loc = 3L,
+    reps = 1L,
+    varE = 1,
+    duration_years = 1,
+    use_env_control = TRUE,
+    env_mean_mu = 0,
+    env_mean_sd = 1,
+    env_year_sd = 0.2,
+    log_per_environment = TRUE,
+    log_aggregate = TRUE
+  )
+
+  ph <- subset(state$phenotype_log, stage == "PYT")
+  pvals <- ph$p_value[!is.na(ph$p_value)]
+  expect_true(length(pvals) > 0L)
+  expect_true(all(pvals > 0 & pvals < 1))
 })

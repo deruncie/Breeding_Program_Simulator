@@ -943,6 +943,9 @@ select_current <- function(
 #' @param inherit_genotypes Whether to inherit genotype availability from source.
 #' @param selection_strategy Optional human-readable selection mechanism text.
 #' @param cross_strategy Optional human-readable crossing mechanism text.
+#' @param cost_per_individual Optional cost logged once per individual in `pop`.
+#' @param cost_event Event label used when `cost_per_individual` is provided.
+#' @param cost_unit Unit label used when `cost_per_individual` is provided.
 #'
 #' @return Updated program state.
 #' @export
@@ -958,7 +961,10 @@ put_stage_pop <- function(
   active = TRUE,
   inherit_genotypes = FALSE,
   selection_strategy = NA_character_,
-  cross_strategy = NA_character_
+  cross_strategy = NA_character_,
+  cost_per_individual = NULL,
+  cost_event = "cohort_creation",
+  cost_unit = "individual"
 ) {
   source_is_bundle <- is.list(source) && !is.null(source$source_ids)
   source_id_vec <- if (!is.null(source_ids)) {
@@ -1033,6 +1039,17 @@ put_stage_pop <- function(
       state = state,
       new_cohort_id = new_cohort_id,
       source_ids = source_id_vec
+    )
+  }
+  if (!is.null(cost_per_individual)) {
+    state <- bp_add_cost(
+      state = state,
+      stage = stage,
+      cohort_id = new_cohort_id,
+      event = as.character(cost_event %||% "cohort_creation"),
+      unit = as.character(cost_unit %||% "individual"),
+      n_units = pop_n_ind(pop),
+      unit_cost = as.numeric(cost_per_individual)
     )
   }
   state
@@ -1366,11 +1383,13 @@ merge_pops <- function(pop_list) {
 #' @param trial_name Optional trial label for environment-mean persistence.
 #' @param use_env_control Logical; when `TRUE`, use explicit environment
 #'   generation (`onlyPheno=TRUE`) and aggregate line means.
-#' @param env_means Optional fixed environment means vector (length `n_loc`).
-#' @param env_mean_mu Mean of generated base environment means when
+#' @param env_means Optional fixed latent environment means vector (length
+#'   `n_loc`) on the normal scale. Values are converted to AlphaSimR
+#'   probabilities with `pnorm()`.
+#' @param env_mean_mu Mean of generated base latent environment means when
 #'   `env_means` is not provided.
-#' @param env_mean_sd SD of generated base environment means.
-#' @param env_year_sd Year-specific environment perturbation SD.
+#' @param env_mean_sd SD of generated base latent environment means.
+#' @param env_year_sd Year-specific latent environment perturbation SD.
 #' @param log_per_environment Log per-environment rows in `phenotype_log`.
 #' @param log_aggregate Log aggregate line-mean rows (`environment=0`).
 #' @param inherit_genotypes Propagate genotype availability from source cohort(s)
@@ -1382,7 +1401,15 @@ merge_pops <- function(pop_list) {
 #' To model explicit environment means, set one of `use_env_control = TRUE`,
 #' `env_means`, `env_mean_mu`, `env_mean_sd`, or `env_year_sd`.
 #' Then each environment phenotype is generated with `onlyPheno = TRUE` and
-#' aggregated into `pop_trial@pheno`.
+#' aggregated into `pop_trial@pheno`. Latent environment values are converted
+#' to AlphaSimR `p` values with `pnorm()`, so latent value `0` corresponds to
+#' the average environment (`p = 0.5`).
+#'
+#' A practical default is to keep most latent environment values in roughly
+#' `[-2, 2]`. In practice this usually means `env_mean_mu = 0` with
+#' `env_mean_sd` around `0.5` to `1.0` and `env_year_sd` around `0.2` to
+#' `0.5`. Larger values push trials into more extreme parts of the GxE
+#' reaction norm.
 #'
 #' @section Logging behavior:
 #' \describe{
@@ -1523,7 +1550,8 @@ run_phenotype_trial <- function(
       state <- env_out$state
       base_env_means <- env_out$env_means
       env_shift <- stats::rnorm(n_loc, mean = 0, sd = as.numeric(env_year_sd %||% 0))
-      p_env <- as.numeric(base_env_means + env_shift)
+      z_env <- as.numeric(base_env_means + env_shift)
+      p_env <- stats::pnorm(z_env)
 
       env_pheno <- vector("list", n_loc)
       for (e in seq_len(n_loc)) {
@@ -1736,7 +1764,8 @@ run_phenotype_trial <- function(
       env_means <- env_out$env_means
       env_year_sd <- as.numeric(cfg$env_year_sd %||% 0)
       env_year_delta <- stats::rnorm(n_loc, mean = 0, sd = env_year_sd)
-      p_env <- env_means + env_year_delta
+      z_env <- as.numeric(env_means + env_year_delta)
+      p_env <- stats::pnorm(z_env)
 
       env_pheno <- vector("list", n_loc)
       for (e in seq_len(n_loc)) {
