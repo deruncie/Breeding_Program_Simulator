@@ -822,7 +822,7 @@ test_that("run_phenotype_trial converts latent environment values to AlphaSimR p
   expect_true(all(pvals > 0 & pvals < 1))
   expect_equal(
     sort(unique(round(pvals, 8))),
-    sort(round(stats::pnorm(c(0, 1, -1) / 2), 8))
+    sort(round(stats::pnorm(c(0, 1, -1)), 8))
   )
 })
 

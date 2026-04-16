@@ -1350,22 +1350,11 @@ bp_resolve_trial_env <- function(cfg, n_loc) {
   )
 }
 
-# Convert latent environment deviation to AlphaSimR p-scale for each trait.
+# Convert standardized environment axis value to AlphaSimR p-scale.
 bp_env_p_from_latent <- function(simParam, traits, latent_env) {
   traits <- as.integer(traits)
   latent_env <- as.numeric(latent_env)
-  out <- vapply(traits, function(trait_idx) {
-    tr_obj <- simParam$traits[[trait_idx]]
-    if ("envVar" %in% methods::slotNames(tr_obj)) {
-      env_sd <- sqrt(as.numeric(tr_obj@envVar))
-      if (!is.finite(env_sd) || env_sd <= 0) {
-        return(0.5)
-      }
-      return(stats::pnorm(latent_env / env_sd))
-    }
-    0.5
-  }, numeric(1))
-  as.numeric(out)
+  rep(stats::pnorm(latent_env), length(traits))
 }
 
 # Pure helper: merge one or more AlphaSimR pops.
@@ -1433,7 +1422,9 @@ merge_pops <- function(pop_list) {
 #' is independent across locations with SD `env_mean_sd` and `year_effect` is
 #' one common draw shared across all locations with SD `env_year_sd`. Latent
 #' environment values are converted to AlphaSimR `p` values with `pnorm()`, so
-#' latent value `0` corresponds to the average environment (`p = 0.5`).
+#' latent value `0` corresponds to the average environment (`p = 0.5`). This
+#' environment axis is shared across traits; AlphaSimR trait-specific `envVar`
+#' then controls the magnitude of the average environmental response.
 #'
 #' A practical default is to keep most latent environment values in roughly
 #' `[-2, 2]`. In practice this often means long-term means near `0`, with
