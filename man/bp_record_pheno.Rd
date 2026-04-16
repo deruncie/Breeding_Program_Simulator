@@ -29,7 +29,9 @@ bp_record_pheno(
 \item{n_loc}{Number of locations represented by this record block.}
 \item{reps}{Number of reps represented by this record block.}
 \item{environment}{Environment id/label(s) for this record block. Can be a scalar or a vector. If a vector is provided, it is aligned to phenotype columns with the same recycling rules as \code{traits}. If \code{NULL}, defaults to \code{NA}.}
-\item{p_value}{Optional environment mean/shift value for this record block.}
+\item{p_value}{Optional environment value(s) for this record block. Can be a
+scalar or a vector. If a vector is provided, it is aligned to phenotype
+columns with the same recycling rules as \code{traits}.}
 \item{drop_na}{Logical; if \code{TRUE}, rows with \code{NA} phenotype values are omitted from the appended log.}
 }
 \value{Updated program state.}

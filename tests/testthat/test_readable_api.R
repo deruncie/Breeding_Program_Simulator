@@ -760,10 +760,12 @@ test_that("bp_record_pheno supports sparse matrices and trait names", {
     n_loc = 3L,
     reps = 1L,
     environment = rep(c("E1", "E2", "E3"), each = 3),
+    p_value = rep(c(0.1, 0.2, 0.3), each = 3),
     drop_na = TRUE
   )
   expect_true(all(state4$phenotype_log$trait %in% c("T1", "T2", "T3")))
   expect_true(all(state4$phenotype_log$environment %in% c("E1", "E2", "E3")))
+  expect_true(all(state4$phenotype_log$p_value %in% c(0.1, 0.2, 0.3)))
 
   expect_error(
     BreedingProgramSimulator:::bp_record_pheno(
@@ -789,7 +791,7 @@ test_that("run_phenotype_trial converts latent environment values to AlphaSimR p
 
   founder <- quickHaplo(nInd = 20, nChr = 1, segSites = 50)
   SP <- SimParam$new(founder)
-  SP$addTraitA(10)
+  SP$addTraitAEG(10, varGxE = 1, varEnv = 4)
 
   state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
   pop <- newPop(founder, simParam = SP)
@@ -808,15 +810,71 @@ test_that("run_phenotype_trial converts latent environment values to AlphaSimR p
     varE = 1,
     duration_years = 1,
     use_env_control = TRUE,
-    env_mean_mu = 0,
-    env_mean_sd = 1,
-    env_year_sd = 0.2,
+    env_means = c(0, 1, -1),
+    env_year_sd = 0,
     log_per_environment = TRUE,
     log_aggregate = TRUE
   )
 
-  ph <- subset(state$phenotype_log, stage == "PYT")
+  ph <- subset(state$phenotype_log, stage == "PYT" & environment %in% c("1", "2", "3"))
   pvals <- ph$p_value[!is.na(ph$p_value)]
   expect_true(length(pvals) > 0L)
   expect_true(all(pvals > 0 & pvals < 1))
+  expect_equal(
+    sort(unique(round(pvals, 8))),
+    sort(round(stats::pnorm(c(0, 1, -1) / 2), 8))
+  )
+})
+
+test_that("run_phenotype_trial does not cache environments by trial_name", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  founder <- quickHaplo(nInd = 12, nChr = 1, segSites = 30)
+  SP <- SimParam$new(founder)
+  SP$addTraitAEG(10, varGxE = 1, varEnv = 1)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  pop <- newPop(founder, simParam = SP)
+
+  state <- BreedingProgramSimulator:::run_phenotype_trial(
+    state = state,
+    pop = pop,
+    output_stage = "AYT",
+    trial_name = "AYT",
+    traits = 1L,
+    n_loc = 2L,
+    reps = 1L,
+    varE = 1,
+    duration_years = 0,
+    use_env_control = TRUE,
+    env_means = c(-1, 1),
+    env_mean_sd = 0,
+    env_year_sd = 0,
+    log_per_environment = TRUE,
+    log_aggregate = FALSE
+  )
+  p1 <- subset(state$phenotype_log, stage == "AYT" & environment %in% c("1", "2"))$p_value
+
+  state <- BreedingProgramSimulator:::run_phenotype_trial(
+    state = state,
+    pop = pop,
+    output_stage = "AYT2",
+    trial_name = "AYT",
+    traits = 1L,
+    n_loc = 2L,
+    reps = 1L,
+    varE = 1,
+    duration_years = 0,
+    use_env_control = TRUE,
+    env_means = c(0, 0),
+    env_mean_sd = 0,
+    env_year_sd = 0,
+    log_per_environment = TRUE,
+    log_aggregate = FALSE
+  )
+  p2 <- subset(state$phenotype_log, stage == "AYT2" & environment %in% c("1", "2"))$p_value
+
+  expect_equal(sort(unique(round(p1, 8))), sort(round(stats::pnorm(c(-1, 1)), 8)))
+  expect_equal(sort(unique(round(p2, 8))), rep(round(stats::pnorm(0), 8), 1L))
 })

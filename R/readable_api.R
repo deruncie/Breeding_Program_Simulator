@@ -1289,6 +1289,7 @@ bp_record_pheno <- function(
   if (ncol(ph) != length(tr_labels)) {
     stop("bp_record_pheno: ncol(pheno_matrix) must match length(traits)", call. = FALSE)
   }
+  p_vals <- recycle_to_cols(as.numeric(p_value), ncol(ph), "p_value")
 
   rows <- do.call(rbind, lapply(seq_along(tr_labels), function(k) {
     data.frame(
@@ -1298,7 +1299,7 @@ bp_record_pheno <- function(
       environment = as.character(env_labels[k]),
       trait = tr_labels[k],
       phenotype_value = as.numeric(ph[, k]),
-      p_value = as.numeric(p_value),
+      p_value = as.numeric(p_vals[k]),
       measured_tick = as.integer(state$time$tick),
       available_tick = as.integer(available_tick),
       n_loc = as.integer(n_loc),
@@ -1315,31 +1316,56 @@ bp_record_pheno <- function(
   state
 }
 
-# Resolve persistent per-trial base environment means.
-bp_get_env_means <- function(state, cfg) {
-  trial_name <- as.character(cfg$trial_name %||% cfg$output_stage %||% "trial")
-  n_loc <- as.integer(cfg$n_loc %||% 1L)
-
-  if (is.null(state$sim$env_means)) {
-    state$sim$env_means <- list()
-  }
-
-  if (!is.null(cfg$env_means)) {
-    means <- as.numeric(cfg$env_means)
-    if (length(means) != n_loc) {
-      stop("cfg$env_means length must equal cfg$n_loc", call. = FALSE)
-    }
-    state$sim$env_means[[trial_name]] <- means
-  } else if (!is.null(state$sim$env_means[[trial_name]])) {
-    means <- as.numeric(state$sim$env_means[[trial_name]])
+# Resolve explicit per-call trial environments with location and year effects.
+bp_resolve_trial_env <- function(cfg, n_loc) {
+  n_loc <- as.integer(n_loc)
+  base_means <- if (!is.null(cfg$env_means)) {
+    as.numeric(cfg$env_means)
+  } else if (!is.null(cfg$env_mean_mu)) {
+    mu <- as.numeric(cfg$env_mean_mu)
+    if (length(mu) == 1L) rep(mu, n_loc) else mu
   } else {
-    mu <- as.numeric(cfg$env_mean_mu %||% 0)
-    sd <- as.numeric(cfg$env_mean_sd %||% 1)
-    means <- stats::rnorm(n_loc, mean = mu, sd = sd)
-    state$sim$env_means[[trial_name]] <- means
+    rep(0, n_loc)
+  }
+  if (length(base_means) != n_loc) {
+    stop("env_means/env_mean_mu length must equal n_loc", call. = FALSE)
   }
 
-  list(state = state, env_means = means)
+  loc_sd <- as.numeric(cfg$env_mean_sd %||% 0)
+  if (length(loc_sd) != 1L || !is.finite(loc_sd) || loc_sd < 0) {
+    stop("env_mean_sd must be one non-negative numeric value", call. = FALSE)
+  }
+  year_sd <- as.numeric(cfg$env_year_sd %||% 0)
+  if (length(year_sd) != 1L || !is.finite(year_sd) || year_sd < 0) {
+    stop("env_year_sd must be one non-negative numeric value", call. = FALSE)
+  }
+
+  loc_dev <- stats::rnorm(n_loc, mean = 0, sd = loc_sd)
+  year_eff <- stats::rnorm(1L, mean = 0, sd = year_sd)
+  list(
+    base_means = base_means,
+    loc_dev = loc_dev,
+    year_eff = as.numeric(year_eff),
+    z_env = as.numeric(base_means + loc_dev + year_eff)
+  )
+}
+
+# Convert latent environment deviation to AlphaSimR p-scale for each trait.
+bp_env_p_from_latent <- function(simParam, traits, latent_env) {
+  traits <- as.integer(traits)
+  latent_env <- as.numeric(latent_env)
+  out <- vapply(traits, function(trait_idx) {
+    tr_obj <- simParam$traits[[trait_idx]]
+    if ("envVar" %in% methods::slotNames(tr_obj)) {
+      env_sd <- sqrt(as.numeric(tr_obj@envVar))
+      if (!is.finite(env_sd) || env_sd <= 0) {
+        return(0.5)
+      }
+      return(stats::pnorm(latent_env / env_sd))
+    }
+    0.5
+  }, numeric(1))
+  as.numeric(out)
 }
 
 # Pure helper: merge one or more AlphaSimR pops.
@@ -1380,16 +1406,18 @@ merge_pops <- function(pop_list) {
 #' @param output_stream Optional output stream override.
 #' @param cycle_id Optional output cycle id override.
 #' @param cost_per_plot Cost per plot for logging.
-#' @param trial_name Optional trial label for environment-mean persistence.
+#' @param trial_name Optional trial label for logging.
 #' @param use_env_control Logical; when `TRUE`, use explicit environment
 #'   generation (`onlyPheno=TRUE`) and aggregate line means.
-#' @param env_means Optional fixed latent environment means vector (length
-#'   `n_loc`) on the normal scale. Values are converted to AlphaSimR
-#'   probabilities with `pnorm()`.
-#' @param env_mean_mu Mean of generated base latent environment means when
-#'   `env_means` is not provided.
-#' @param env_mean_sd SD of generated base latent environment means.
-#' @param env_year_sd Year-specific latent environment perturbation SD.
+#' @param env_means Optional fixed long-term latent environment means vector
+#'   (length `n_loc`) on the normal scale.
+#' @param env_mean_mu Long-term latent environment means when `env_means` is
+#'   not provided. May be a scalar (recycled to all locations) or a vector of
+#'   length `n_loc`.
+#' @param env_mean_sd SD of location-specific deviation around the supplied
+#'   long-term means for this trial call.
+#' @param env_year_sd SD of one common year effect shared by all locations in
+#'   this trial call.
 #' @param log_per_environment Log per-environment rows in `phenotype_log`.
 #' @param log_aggregate Log aggregate line-mean rows (`environment=0`).
 #' @param inherit_genotypes Propagate genotype availability from source cohort(s)
@@ -1400,16 +1428,18 @@ merge_pops <- function(pop_list) {
 #' @section Environment-control options:
 #' To model explicit environment means, set one of `use_env_control = TRUE`,
 #' `env_means`, `env_mean_mu`, `env_mean_sd`, or `env_year_sd`.
-#' Then each environment phenotype is generated with `onlyPheno = TRUE` and
-#' aggregated into `pop_trial@pheno`. Latent environment values are converted
-#' to AlphaSimR `p` values with `pnorm()`, so latent value `0` corresponds to
-#' the average environment (`p = 0.5`).
+#' For each call, BPS constructs one latent environment value per location as
+#' `env_means + location_deviation + year_effect`, where `location_deviation`
+#' is independent across locations with SD `env_mean_sd` and `year_effect` is
+#' one common draw shared across all locations with SD `env_year_sd`. Latent
+#' environment values are converted to AlphaSimR `p` values with `pnorm()`, so
+#' latent value `0` corresponds to the average environment (`p = 0.5`).
 #'
 #' A practical default is to keep most latent environment values in roughly
-#' `[-2, 2]`. In practice this usually means `env_mean_mu = 0` with
-#' `env_mean_sd` around `0.5` to `1.0` and `env_year_sd` around `0.2` to
-#' `0.5`. Larger values push trials into more extreme parts of the GxE
-#' reaction norm.
+#' `[-2, 2]`. In practice this often means long-term means near `0`, with
+#' `env_mean_sd` around `0.1` to `0.5` and `env_year_sd` around `0.1` to
+#' `0.3`. Larger values push trials into more extreme parts of the GxE
+#' reaction norm or create strongly correlated year effects.
 #'
 #' @section Logging behavior:
 #' \describe{
@@ -1473,8 +1503,8 @@ merge_pops <- function(pop_list) {
 #'     varE = 1.0,
 #'     duration_years = 0.5,
 #'     cost_per_plot = 20,
-#'     env_mean_mu = 0,
-#'     env_mean_sd = 1,
+#'     env_means = c(-0.5, 0.0, 0.5, 1.0),
+#'     env_mean_sd = 0.25,
 #'     env_year_sd = 0.2
 #'   )
 #' }
@@ -1538,29 +1568,31 @@ run_phenotype_trial <- function(
       !is.null(env_mean_mu) || !is.null(env_mean_sd)
 
     if (isTRUE(use_env)) {
-      env_cfg <- list(
-        trial_name = as.character(trial_name %||% stage_name),
-        output_stage = stage_name,
-        n_loc = n_loc,
-        env_means = env_means,
-        env_mean_mu = env_mean_mu,
-        env_mean_sd = env_mean_sd
+      env_out <- bp_resolve_trial_env(
+        cfg = list(
+          env_means = env_means,
+          env_mean_mu = env_mean_mu,
+          env_mean_sd = env_mean_sd,
+          env_year_sd = env_year_sd
+        ),
+        n_loc = n_loc
       )
-      env_out <- bp_get_env_means(state, env_cfg)
-      state <- env_out$state
-      base_env_means <- env_out$env_means
-      env_shift <- stats::rnorm(n_loc, mean = 0, sd = as.numeric(env_year_sd %||% 0))
-      z_env <- as.numeric(base_env_means + env_shift)
-      p_env <- stats::pnorm(z_env)
+      z_env <- env_out$z_env
+      p_env <- matrix(NA_real_, nrow = n_loc, ncol = length(traits))
 
       env_pheno <- vector("list", n_loc)
       for (e in seq_len(n_loc)) {
+        p_env[e, ] <- bp_env_p_from_latent(
+          simParam = state$sim$SP,
+          traits = traits,
+          latent_env = z_env[e]
+        )
         env_pheno[[e]] <- AlphaSimR::setPheno(
           pop_trial,
           varE = as.numeric(varE),
           reps = reps,
           traits = traits,
-          p = p_env[e],
+          p = p_env[e, ],
           onlyPheno = TRUE,
           simParam = state$sim$SP
         )
@@ -1687,7 +1719,7 @@ run_phenotype_trial <- function(
           n_loc = n_loc,
           reps = reps,
           environment = e,
-          p_value = p_env[e]
+          p_value = p_env[e, ]
         )
       }
     }
@@ -1706,7 +1738,7 @@ run_phenotype_trial <- function(
         n_loc = n_loc,
         reps = reps,
         environment = 0L,
-        p_value = mean(p_env)
+        p_value = if (is.matrix(p_env)) colMeans(p_env) else mean(p_env)
       )
     }
 
@@ -1759,22 +1791,23 @@ run_phenotype_trial <- function(
 
     pop_trial <- pop_subset(pop_in, idx)
     if (isTRUE(use_env_control)) {
-      env_out <- bp_get_env_means(state, cfg)
-      state <- env_out$state
-      env_means <- env_out$env_means
-      env_year_sd <- as.numeric(cfg$env_year_sd %||% 0)
-      env_year_delta <- stats::rnorm(n_loc, mean = 0, sd = env_year_sd)
-      z_env <- as.numeric(env_means + env_year_delta)
-      p_env <- stats::pnorm(z_env)
+      env_out <- bp_resolve_trial_env(cfg, n_loc = n_loc)
+      z_env <- env_out$z_env
+      p_env <- matrix(NA_real_, nrow = n_loc, ncol = length(traits))
 
       env_pheno <- vector("list", n_loc)
       for (e in seq_len(n_loc)) {
+        p_env[e, ] <- bp_env_p_from_latent(
+          simParam = state$sim$SP,
+          traits = traits,
+          latent_env = z_env[e]
+        )
         env_pheno[[e]] <- AlphaSimR::setPheno(
           pop_trial,
           varE = cfg$varE,
           reps = reps,
           traits = traits,
-          p = p_env[e],
+          p = p_env[e, ],
           onlyPheno = TRUE,
           simParam = state$sim$SP
         )
@@ -1884,7 +1917,7 @@ run_phenotype_trial <- function(
           n_loc = n_loc,
           reps = reps,
           environment = e,
-          p_value = p_env[e]
+          p_value = p_env[e, ]
         )
       }
     }
@@ -1903,7 +1936,7 @@ run_phenotype_trial <- function(
         n_loc = n_loc,
         reps = reps,
         environment = 0L,
-        p_value = mean(p_env)
+        p_value = if (is.matrix(p_env)) colMeans(p_env) else mean(p_env)
       )
     }
 

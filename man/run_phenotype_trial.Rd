@@ -67,21 +67,23 @@ logging.}
 
 \item{cost_per_plot}{Cost per plot for logging.}
 
-\item{trial_name}{Optional trial label for environment-mean persistence.}
+\item{trial_name}{Optional trial label for logging.}
 
 \item{use_env_control}{Logical; when `TRUE`, use explicit environment
 generation (`onlyPheno=TRUE`) and aggregate line means.}
 
-\item{env_means}{Optional fixed latent environment means vector (length
-`n_loc`) on the normal scale. Values are converted to AlphaSimR
-probabilities with `pnorm()`.}
+\item{env_means}{Optional fixed long-term latent environment means vector
+(length `n_loc`) on the normal scale.}
 
-\item{env_mean_mu}{Mean of generated base latent environment means when
-`env_means` is not provided.}
+\item{env_mean_mu}{Long-term latent environment means when `env_means` is
+not provided. May be a scalar (recycled to all locations) or a vector of
+length `n_loc`.}
 
-\item{env_mean_sd}{SD of generated base latent environment means.}
+\item{env_mean_sd}{SD of location-specific deviation around the supplied
+long-term means for this trial call.}
 
-\item{env_year_sd}{Year-specific latent environment perturbation SD.}
+\item{env_year_sd}{SD of one common year effect shared by all locations in
+this trial call.}
 
 \item{log_per_environment}{Log per-environment rows in `phenotype_log`.}
 
@@ -105,16 +107,18 @@ output cohort creation, and cost logging.
 
 To model explicit environment means, set one of `use_env_control = TRUE`,
 `env_means`, `env_mean_mu`, `env_mean_sd`, or `env_year_sd`.
-Then each environment phenotype is generated with `onlyPheno = TRUE` and
-aggregated into `pop_trial@pheno`. Latent environment values are converted
-to AlphaSimR `p` values with `pnorm()`, so latent value `0` corresponds to
-the average environment (`p = 0.5`).
+For each call, BPS constructs one latent environment value per location as
+`env_means + location_deviation + year_effect`, where `location_deviation`
+is independent across locations with SD `env_mean_sd` and `year_effect` is
+one common draw shared across all locations with SD `env_year_sd`. Latent
+environment values are converted to AlphaSimR `p` values with `pnorm()`, so
+latent value `0` corresponds to the average environment (`p = 0.5`).
 
 A practical default is to keep most latent environment values in roughly
-`[-2, 2]`. In practice this usually means `env_mean_mu = 0` with
-`env_mean_sd` around `0.5` to `1.0` and `env_year_sd` around `0.2` to
-`0.5`. Larger values push trials into more extreme parts of the GxE
-reaction norm.
+`[-2, 2]`. In practice this often means long-term means near `0`, with
+`env_mean_sd` around `0.1` to `0.5` and `env_year_sd` around `0.1` to
+`0.3`. Larger values push trials into more extreme parts of the GxE
+reaction norm or create strongly correlated year effects.
 }
 
 \section{Logging behavior}{
@@ -181,8 +185,8 @@ if (requireNamespace("AlphaSimR", quietly = TRUE)) {
     varE = 1.0,
     duration_years = 0.5,
     cost_per_plot = 20,
-    env_mean_mu = 0,
-    env_mean_sd = 1,
+    env_means = c(-0.5, 0.0, 0.5, 1.0),
+    env_mean_sd = 0.25,
     env_year_sd = 0.2
   )
 }
