@@ -72,8 +72,9 @@ logging.}
 \item{use_env_control}{Logical; when `TRUE`, use explicit environment
 generation (`onlyPheno=TRUE`) and aggregate line means.}
 
-\item{env_means}{Optional fixed long-term latent environment means vector
-(length `n_loc`) on the normal scale.}
+\item{env_means}{Optional fixed long-term latent environment means on the
+normal scale. May be a scalar (recycled to all locations) or a vector of
+length `n_loc`.}
 
 \item{env_mean_mu}{Long-term latent environment means when `env_means` is
 not provided. May be a scalar (recycled to all locations) or a vector of

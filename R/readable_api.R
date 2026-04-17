@@ -1320,7 +1320,8 @@ bp_record_pheno <- function(
 bp_resolve_trial_env <- function(cfg, n_loc) {
   n_loc <- as.integer(n_loc)
   base_means <- if (!is.null(cfg$env_means)) {
-    as.numeric(cfg$env_means)
+    means <- as.numeric(cfg$env_means)
+    if (length(means) == 1L) rep(means, n_loc) else means
   } else if (!is.null(cfg$env_mean_mu)) {
     mu <- as.numeric(cfg$env_mean_mu)
     if (length(mu) == 1L) rep(mu, n_loc) else mu
@@ -1398,8 +1399,9 @@ merge_pops <- function(pop_list) {
 #' @param trial_name Optional trial label for logging.
 #' @param use_env_control Logical; when `TRUE`, use explicit environment
 #'   generation (`onlyPheno=TRUE`) and aggregate line means.
-#' @param env_means Optional fixed long-term latent environment means vector
-#'   (length `n_loc`) on the normal scale.
+#' @param env_means Optional fixed long-term latent environment means on the
+#'   normal scale. May be a scalar (recycled to all locations) or a vector of
+#'   length `n_loc`.
 #' @param env_mean_mu Long-term latent environment means when `env_means` is
 #'   not provided. May be a scalar (recycled to all locations) or a vector of
 #'   length `n_loc`.

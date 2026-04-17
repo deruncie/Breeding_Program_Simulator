@@ -878,3 +878,35 @@ test_that("run_phenotype_trial does not cache environments by trial_name", {
   expect_equal(sort(unique(round(p1, 8))), sort(round(stats::pnorm(c(-1, 1)), 8)))
   expect_equal(sort(unique(round(p2, 8))), rep(round(stats::pnorm(0), 8), 1L))
 })
+
+test_that("run_phenotype_trial recycles scalar env_means across locations", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  founder <- quickHaplo(nInd = 12, nChr = 1, segSites = 30)
+  SP <- SimParam$new(founder)
+  SP$addTraitAEG(10, varGxE = 1, varEnv = 1)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  pop <- newPop(founder, simParam = SP)
+
+  state <- BreedingProgramSimulator:::run_phenotype_trial(
+    state = state,
+    pop = pop,
+    output_stage = "AYT",
+    traits = 1L,
+    n_loc = 4L,
+    reps = 1L,
+    varE = 1,
+    duration_years = 0,
+    use_env_control = TRUE,
+    env_means = 0,
+    env_mean_sd = 0,
+    env_year_sd = 0,
+    log_per_environment = TRUE,
+    log_aggregate = FALSE
+  )
+
+  pvals <- subset(state$phenotype_log, stage == "AYT" & environment %in% c("1", "2", "3", "4"))$p_value
+  expect_equal(sort(unique(round(pvals, 8))), rep(round(stats::pnorm(0), 8), 1L))
+})
