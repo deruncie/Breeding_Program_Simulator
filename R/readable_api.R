@@ -1536,7 +1536,7 @@ run_phenotype_trial <- function(
     if (is.null(output_stage) || !nzchar(as.character(output_stage))) {
       stop("run_phenotype_trial: output_stage is required when pop is supplied.", call. = FALSE)
     }
-    if (is.null(varE) || !is.finite(as.numeric(varE))) {
+    if (is.null(varE) || any(!is.finite(varE))) {
       stop("run_phenotype_trial: varE is required when pop is supplied.", call. = FALSE)
     }
 
@@ -1582,7 +1582,7 @@ run_phenotype_trial <- function(
         )
         env_pheno[[e]] <- AlphaSimR::setPheno(
           pop_trial,
-          varE = as.numeric(varE),
+          varE = varE,
           reps = reps,
           traits = traits,
           p = p_env[e, ],
@@ -1604,7 +1604,7 @@ run_phenotype_trial <- function(
       for (e in seq_len(n_loc)) {
         env_pheno[[e]] <- AlphaSimR::setPheno(
           pop_trial,
-          varE = as.numeric(varE),
+          varE = varE,
           reps = reps,
           traits = traits,
           onlyPheno = TRUE,
@@ -1693,7 +1693,7 @@ run_phenotype_trial <- function(
         traits = traits,
         n_loc = n_loc,
         reps = reps,
-        varE = as.numeric(varE),
+        varE = varE,
         duration_years = as.numeric(duration_years %||% 1),
         n_selected = n_selected
       )
