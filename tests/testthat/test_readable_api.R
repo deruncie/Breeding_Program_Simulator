@@ -590,6 +590,42 @@ test_that("run_phenotype_trial explicit-pop path preserves matrix varE", {
   expect_equal(pop_out@pheno, pop_ref@pheno)
 })
 
+test_that("run_phenotype_trial only fills measured traits in pheno slot", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  set.seed(41)
+  h <- quickHaplo(10, 2, 50)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+  SP$addTraitA(10)
+
+  trial_pop <- newPop(h, simParam = SP)
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+
+  state_out <- BreedingProgramSimulator:::run_phenotype_trial(
+    state = state,
+    pop = trial_pop,
+    output_stage = "PYT",
+    traits = 1L,
+    n_loc = 1L,
+    reps = 1L,
+    varE = 1,
+    duration_years = 0,
+    use_env_control = FALSE,
+    log_aggregate = TRUE
+  )
+
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state_out)
+  pop_out <- state_out$pops[[cid]]
+
+  expect_true(all(is.finite(pop_out@pheno[, 1L])))
+  expect_true(all(is.na(pop_out@pheno[, 2L])))
+
+  ph_log <- subset(state_out$phenotype_log, cohort_id == cid & environment == 0L)
+  expect_true(all(ph_log$trait == "Trait1"))
+})
+
 test_that("subset copies can inherit genotype log and skip re-genotyping costs", {
   state <- BreedingProgramSimulator:::bp_init_state(
     SP = NULL,

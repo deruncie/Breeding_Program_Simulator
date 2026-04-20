@@ -706,6 +706,38 @@ bp_handle_no_ready <- function(cfg, fn_name, stage_label, context = "no availabl
   }
 }
 
+bp_assign_trial_pheno <- function(pop, traits, pheno_matrix) {
+  traits <- as.integer(traits)
+  ph <- pheno_matrix
+  if (is.null(dim(ph))) {
+    ph <- matrix(ph, ncol = length(traits))
+  }
+  if (ncol(ph) == ncol(pop@gv)) {
+    ph <- ph[, traits, drop = FALSE]
+  }
+  if (ncol(ph) != length(traits)) {
+    stop("bp_assign_trial_pheno: pheno_matrix columns must match length(traits).", call. = FALSE)
+  }
+
+  full_ph <- matrix(NA_real_, nrow = pop_n_ind(pop), ncol = ncol(pop@gv))
+  colnames(full_ph) <- colnames(pop@gv)
+  full_ph[, traits] <- ph
+  pop@pheno <- full_ph
+  pop
+}
+
+bp_trait_labels <- function(pop, traits) {
+  traits <- as.integer(traits)
+  gv_names <- colnames(pop@gv)
+  if (!is.null(gv_names) && length(gv_names) >= max(traits)) {
+    labs <- gv_names[traits]
+    if (all(!is.na(labs) & nzchar(labs))) {
+      return(as.character(labs))
+    }
+  }
+  paste0("trait", traits)
+}
+
 #' Skip Event When Input Is Missing
 #'
 #' Standard helper for event verbs when an input cohort bundle is absent.
@@ -1135,6 +1167,7 @@ log_trial_pheno <- function(
   avail_tick <- state$cohorts$available_tick[match(cid, state$cohorts$cohort_id)]
   ph <- pop_trial@pheno
   tr <- as.integer(traits)
+  tr_labels <- bp_trait_labels(pop_trial, tr)
   if (is.null(dim(ph))) {
     ph <- matrix(ph, ncol = length(tr))
   }
@@ -1143,7 +1176,7 @@ log_trial_pheno <- function(
     cohort_id = cid,
     stage = stage,
     individual_id = pop_trial@id,
-    traits = tr,
+    traits = tr_labels,
     pheno_matrix = ph,
     available_tick = avail_tick,
     n_loc = as.integer(n_loc),
@@ -1555,6 +1588,7 @@ run_phenotype_trial <- function(
     reps <- as.integer(reps %||% 1L)
     stage_name <- as.character(output_stage)
     pop_trial <- pop
+    trait_labels <- bp_trait_labels(pop_trial, traits)
 
     use_env <- isTRUE(use_env_control) ||
       !is.null(env_means) || !is.null(env_year_sd) ||
@@ -1594,11 +1628,7 @@ run_phenotype_trial <- function(
         }
       }
       pheno_mean <- Reduce("+", env_pheno) / n_loc
-      if (length(traits) == 1L) {
-        pop_trial@pheno[] <- as.numeric(pheno_mean[, 1L])
-      } else {
-        pop_trial@pheno[,] <- pheno_mean
-      }
+      pop_trial <- bp_assign_trial_pheno(pop_trial, traits, pheno_mean)
     } else {
       env_pheno <- vector("list", n_loc)
       for (e in seq_len(n_loc)) {
@@ -1615,11 +1645,7 @@ run_phenotype_trial <- function(
         }
       }
       pheno_mean <- Reduce("+", env_pheno) / n_loc
-      if (length(traits) == 1L) {
-        pop_trial@pheno[] <- as.numeric(pheno_mean[, 1L])
-      } else {
-        pop_trial@pheno[,] <- pheno_mean
-      }
+      pop_trial <- bp_assign_trial_pheno(pop_trial, traits, pheno_mean)
       p_env <- rep(NA_real_, n_loc)
     }
 
@@ -1706,7 +1732,7 @@ run_phenotype_trial <- function(
           cohort_id = new_cohort_id,
           stage = stage_name,
           individual_id = pop_trial@id,
-          traits = traits,
+          traits = trait_labels,
           pheno_matrix = env_pheno[[e]],
           available_tick = avail_tick,
           n_loc = n_loc,
@@ -1718,14 +1744,13 @@ run_phenotype_trial <- function(
     }
 
     if (isTRUE(log_aggregate %||% TRUE)) {
-      ph <- pop_trial@pheno
-      if (is.null(dim(ph))) ph <- matrix(ph, ncol = length(traits))
+      ph <- pop_trial@pheno[, traits, drop = FALSE]
       state <- bp_record_pheno(
         state = state,
         cohort_id = new_cohort_id,
         stage = stage_name,
         individual_id = pop_trial@id,
-        traits = traits,
+        traits = trait_labels,
         pheno_matrix = ph,
         available_tick = avail_tick,
         n_loc = n_loc,
@@ -1783,6 +1808,7 @@ run_phenotype_trial <- function(
     if (length(idx) == 0L) next
 
     pop_trial <- pop_subset(pop_in, idx)
+    trait_labels <- bp_trait_labels(pop_trial, traits)
     if (isTRUE(use_env_control)) {
       env_out <- bp_resolve_trial_env(cfg, n_loc = n_loc)
       z_env <- env_out$z_env
@@ -1810,11 +1836,7 @@ run_phenotype_trial <- function(
       }
 
       pheno_mean <- Reduce("+", env_pheno) / n_loc
-      if (length(traits) == 1L) {
-        pop_trial@pheno[] <- as.numeric(pheno_mean[, 1])
-      } else {
-        pop_trial@pheno[,] <- pheno_mean
-      }
+      pop_trial <- bp_assign_trial_pheno(pop_trial, traits, pheno_mean)
     } else {
       reps_eff <- as.integer(max(1L, reps * n_loc))
       pop_trial <- AlphaSimR::setPheno(
@@ -1824,6 +1846,7 @@ run_phenotype_trial <- function(
         traits = traits,
         simParam = state$sim$SP
       )
+      pop_trial <- bp_assign_trial_pheno(pop_trial, traits, pop_trial@pheno[, traits, drop = FALSE])
       env_pheno <- NULL
       p_env <- rep(NA_real_, n_loc)
     }
@@ -1904,7 +1927,7 @@ run_phenotype_trial <- function(
           cohort_id = new_cohort_id,
           stage = stage_name,
           individual_id = pop_trial@id,
-          traits = traits,
+          traits = trait_labels,
           pheno_matrix = env_pheno[[e]],
           available_tick = avail_tick,
           n_loc = n_loc,
@@ -1916,14 +1939,13 @@ run_phenotype_trial <- function(
     }
 
     if (isTRUE(cfg$log_aggregate %||% TRUE)) {
-      ph <- pop_trial@pheno
-      if (is.null(dim(ph))) ph <- matrix(ph, ncol = length(traits))
+      ph <- pop_trial@pheno[, traits, drop = FALSE]
       state <- bp_record_pheno(
         state = state,
         cohort_id = new_cohort_id,
         stage = stage_name,
         individual_id = pop_trial@id,
-        traits = traits,
+        traits = trait_labels,
         pheno_matrix = ph,
         available_tick = avail_tick,
         n_loc = n_loc,
