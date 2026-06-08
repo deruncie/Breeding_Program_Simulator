@@ -706,6 +706,25 @@ bp_handle_no_ready <- function(cfg, fn_name, stage_label, context = "no availabl
   }
 }
 
+bp_validate_n_loc <- function(n_loc, fn_name = "run_phenotype_trial") {
+  n_loc <- as.numeric(n_loc %||% 1L)
+  if (length(n_loc) != 1L || !is.finite(n_loc) || n_loc < 1) {
+    stop(sprintf("%s: n_loc must be a single finite value >= 1.", fn_name), call. = FALSE)
+  }
+  if (!isTRUE(all.equal(n_loc, round(n_loc)))) {
+    stop(sprintf("%s: n_loc must be a whole number; got %s.", fn_name, format(n_loc)), call. = FALSE)
+  }
+  as.integer(round(n_loc))
+}
+
+bp_validate_reps <- function(reps, fn_name = "run_phenotype_trial") {
+  reps <- as.numeric(reps %||% 1)
+  if (length(reps) != 1L || !is.finite(reps) || reps <= 0) {
+    stop(sprintf("%s: reps must be a single finite value > 0.", fn_name), call. = FALSE)
+  }
+  reps
+}
+
 bp_assign_trial_pheno <- function(pop, traits, pheno_matrix) {
   traits <- as.integer(traits)
   ph <- pheno_matrix
@@ -1336,7 +1355,7 @@ bp_record_pheno <- function(
       measured_tick = as.integer(state$time$tick),
       available_tick = as.integer(available_tick),
       n_loc = as.integer(n_loc),
-      reps = as.integer(reps),
+      reps = as.numeric(reps),
       stringsAsFactors = FALSE
     )
   }))
@@ -1351,7 +1370,7 @@ bp_record_pheno <- function(
 
 # Resolve explicit per-call trial environments with location and year effects.
 bp_resolve_trial_env <- function(cfg, n_loc) {
-  n_loc <- as.integer(n_loc)
+  n_loc <- bp_validate_n_loc(n_loc, fn_name = "bp_resolve_trial_env")
   base_means <- if (!is.null(cfg$env_means)) {
     means <- as.numeric(cfg$env_means)
     if (length(means) == 1L) rep(means, n_loc) else means
@@ -1584,8 +1603,8 @@ run_phenotype_trial <- function(
     source_ids <- parse_source_ids(input_cohorts)
 
     traits <- as.integer(traits %||% 1L)
-    n_loc <- as.integer(n_loc %||% 1L)
-    reps <- as.integer(reps %||% 1L)
+    n_loc <- bp_validate_n_loc(n_loc %||% 1L, fn_name = "run_phenotype_trial")
+    reps <- bp_validate_reps(reps %||% 1L, fn_name = "run_phenotype_trial")
     stage_name <- as.character(output_stage)
     pop_trial <- pop
     trait_labels <- bp_trait_labels(pop_trial, traits)
@@ -1697,12 +1716,12 @@ run_phenotype_trial <- function(
     sel_desc <- as.character(selection_strategy %||% "unspecified")
 
     event_txt <- sprintf(
-      "Year %s: Started a %s trial by selecting n=%d from %s by %s. The trial has %d locations with %d rep per location and takes %.2f years to complete and measures traits %s. Will be available Year %s.",
+      "Year %s: Started a %s trial by selecting n=%d from %s by %s. The trial has %d locations with %s rep per location and takes %.2f years to complete and measures traits %s. Will be available Year %s.",
       yr_now, stage_name, n_selected, src_label, sel_desc, n_loc, reps,
       as.numeric(duration_years %||% 1), trait_txt, yr_av
     )
     tpl_txt <- sprintf(
-      "Phenotype %s from %s by %s (%d loc x %d rep, traits %s, dur %.2f)",
+      "Phenotype %s from %s by %s (%d loc x %s rep, traits %s, dur %.2f)",
       stage_name, src_stage, sel_desc, n_loc, reps, trait_txt, as.numeric(duration_years %||% 1)
     )
     state <- bp_log_event(
@@ -1790,8 +1809,8 @@ run_phenotype_trial <- function(
   }
 
   traits <- as.integer(cfg$traits %||% 1L)
-  n_loc <- as.integer(cfg$n_loc %||% 1L)
-  reps <- as.integer(cfg$reps %||% 1L)
+  n_loc <- bp_validate_n_loc(cfg$n_loc %||% 1L, fn_name = "run_phenotype_trial")
+  reps <- bp_validate_reps(cfg$reps %||% 1L, fn_name = "run_phenotype_trial")
   use_env_control <- isTRUE(cfg$use_env_control %||% FALSE) ||
     !is.null(cfg$env_means) || !is.null(cfg$env_year_sd) ||
     !is.null(cfg$env_mean_mu) || !is.null(cfg$env_mean_sd)
@@ -1838,7 +1857,7 @@ run_phenotype_trial <- function(
       pheno_mean <- Reduce("+", env_pheno) / n_loc
       pop_trial <- bp_assign_trial_pheno(pop_trial, traits, pheno_mean)
     } else {
-      reps_eff <- as.integer(max(1L, reps * n_loc))
+      reps_eff <- max(1, reps * n_loc)
       pop_trial <- AlphaSimR::setPheno(
         pop_trial,
         varE = cfg$varE,
@@ -1878,7 +1897,7 @@ run_phenotype_trial <- function(
     yr_av <- bp_format_year(bp_tick_to_year(state, avail_tick))
     trait_txt <- paste(traits, collapse = ",")
     event_txt <- sprintf(
-      "Year %s: Started a %s trial by selecting n=%d from %s by %s. The trial has %d locations with %d rep per location and takes %.2f years to complete and measures traits %s. Will be available Year %s.",
+      "Year %s: Started a %s trial by selecting n=%d from %s by %s. The trial has %d locations with %s rep per location and takes %.2f years to complete and measures traits %s. Will be available Year %s.",
       yr_now,
       stage_name,
       n_selected,
@@ -1891,7 +1910,7 @@ run_phenotype_trial <- function(
       yr_av
     )
     tpl_txt <- sprintf(
-      "Phenotype %s from %s by %s (%d loc x %d rep, traits %s, dur %.2f)",
+      "Phenotype %s from %s by %s (%d loc x %s rep, traits %s, dur %.2f)",
       stage_name,
       as.character(src$stage),
       sel_desc,

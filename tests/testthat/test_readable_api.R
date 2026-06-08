@@ -626,6 +626,61 @@ test_that("run_phenotype_trial only fills measured traits in pheno slot", {
   expect_true(all(ph_log$trait == "Trait1"))
 })
 
+test_that("run_phenotype_trial requires whole-number n_loc", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  h <- quickHaplo(10, 2, 50)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+  trial_pop <- newPop(h, simParam = SP)
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+
+  expect_error(
+    BreedingProgramSimulator:::run_phenotype_trial(
+      state = state,
+      pop = trial_pop,
+      output_stage = "PYT",
+      traits = 1L,
+      n_loc = 1.5,
+      reps = 1,
+      varE = 1,
+      duration_years = 0,
+      use_env_control = FALSE
+    ),
+    "n_loc must be a whole number"
+  )
+})
+
+test_that("run_phenotype_trial preserves non-integer reps", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  set.seed(42)
+  h <- quickHaplo(10, 2, 50)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+
+  trial_pop <- newPop(h, simParam = SP)
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+
+  state_out <- BreedingProgramSimulator:::run_phenotype_trial(
+    state = state,
+    pop = trial_pop,
+    output_stage = "PYT",
+    traits = 1L,
+    n_loc = 1L,
+    reps = 1.5,
+    varE = 1,
+    duration_years = 0,
+    use_env_control = FALSE
+  )
+
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state_out)
+  ph_log <- subset(state_out$phenotype_log, cohort_id == cid)
+  expect_true(all(ph_log$reps == 1.5))
+})
+
 test_that("subset copies can inherit genotype log and skip re-genotyping costs", {
   state <- BreedingProgramSimulator:::bp_init_state(
     SP = NULL,
