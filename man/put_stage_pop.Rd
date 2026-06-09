@@ -17,6 +17,8 @@ put_stage_pop(
   inherit_genotypes = FALSE,
   selection_strategy = NA_character_,
   cross_strategy = NA_character_,
+  cost_per_unit = NULL,
+  cost_units = NULL,
   cost_per_individual = NULL,
   cost_event = "cohort_creation",
   cost_unit = "individual"
@@ -49,11 +51,18 @@ this overrides ids inferred from `source`.}
 
 \item{cross_strategy}{Optional human-readable crossing mechanism text.}
 
-\item{cost_per_individual}{Optional cost logged once per individual in `pop`.}
+\item{cost_per_unit}{Optional cost logged for this stage output. If
+`cost_units = NULL`, units default to the number of individuals in `pop`.}
 
-\item{cost_event}{Event label used when `cost_per_individual` is provided.}
+\item{cost_units}{Optional number of cost units. Use this when cost is per
+cross, family, tray, plot, or another unit that differs from individuals.}
 
-\item{cost_unit}{Unit label used when `cost_per_individual` is provided.}
+\item{cost_per_individual}{Deprecated compatibility alias for
+`cost_per_unit` with individual units.}
+
+\item{cost_event}{Event label used when cost is logged.}
+
+\item{cost_unit}{Unit label used when cost is logged.}
 }
 \value{
 Updated program state.

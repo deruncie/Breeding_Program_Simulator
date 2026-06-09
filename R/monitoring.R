@@ -292,3 +292,161 @@ bp_plot_metric_by_year <- function(
     ggplot2::geom_point() +
     ggplot2::labs(x = ifelse(year_col == "available_year", "Available Year", "Origin Year"), y = metric)
 }
+
+bp_select_report_cohorts <- function(state, stage, stream = NULL, use = c("latest_available", "previous_available", "latest", "all_available")) {
+  use <- match.arg(use)
+  df <- state$cohorts
+  if (!is.null(stage)) df <- df[df$stage %in% stage, , drop = FALSE]
+  if (!is.null(stream)) df <- df[df$stream %in% stream, , drop = FALSE]
+  if (nrow(df) == 0L) return(df)
+
+  if (use %in% c("latest_available", "previous_available", "all_available")) {
+    df <- df[df$available_tick <= as.integer(state$time$tick), , drop = FALSE]
+  }
+  if (nrow(df) == 0L) return(df)
+  df <- df[order(df$available_tick, df$created_tick, decreasing = TRUE), , drop = FALSE]
+
+  if (use == "all_available") return(df)
+  if (use == "previous_available") {
+    if (nrow(df) < 2L) return(df[0, , drop = FALSE])
+    return(df[2L, , drop = FALSE])
+  }
+  df[1L, , drop = FALSE]
+}
+
+bp_report_matrix <- function(pop, traits = NULL, slot = c("gv", "pheno", "ebv")) {
+  slot <- match.arg(slot)
+  if (!methods::is(pop, "Pop") && !methods::is(pop, "RawPop")) {
+    stop("bp_report_stage_metric requires AlphaSimR Pop-like populations for built-in metrics.", call. = FALSE)
+  }
+  mat <- switch(slot, gv = pop@gv, pheno = pop@pheno, ebv = pop@ebv)
+  if (is.null(mat)) return(matrix(numeric(0), nrow = pop_n_ind(pop), ncol = 0L))
+  mat <- as.matrix(mat)
+  if (is.null(traits)) return(mat)
+  if (is.numeric(traits)) return(mat[, as.integer(traits), drop = FALSE])
+  idx <- match(as.character(traits), colnames(mat))
+  if (anyNA(idx)) {
+    stop("Some requested traits were not found in the population matrix.", call. = FALSE)
+  }
+  mat[, idx, drop = FALSE]
+}
+
+bp_apply_report_index <- function(mat, include_index = FALSE, index_weights = NULL) {
+  mat <- as.matrix(mat)
+  if (!isTRUE(include_index)) return(mat)
+  w <- as.numeric(index_weights %||% rep(1, ncol(mat)))
+  if (length(w) != ncol(mat)) stop("index_weights length must match number of reported traits.", call. = FALSE)
+  cbind(mat, Index = drop(mat %*% matrix(w, ncol = 1L)))
+}
+
+bp_named_metric <- function(values, mat, include_index = FALSE) {
+  values <- as.numeric(values)
+  nms <- colnames(mat)
+  if (is.null(nms) || any(!nzchar(nms))) nms <- paste0("trait", seq_along(values))
+  if (length(values) == 1L && !isTRUE(include_index)) return(unname(values))
+  stats::setNames(values, nms[seq_along(values)])
+}
+
+bp_scale_report_values <- function(values, baseline, scale) {
+  scale <- match.arg(scale, c("none", "mean", "var"))
+  if (scale == "none") return(values)
+  if (is.null(baseline)) return(values)
+  nms <- names(values)
+  if (is.null(nms)) {
+    b_mean <- as.numeric(baseline$mean)[seq_along(values)]
+    b_sd <- as.numeric(baseline$sd)[seq_along(values)]
+  } else {
+    b_mean <- as.numeric(baseline$mean[nms])
+    b_sd <- as.numeric(baseline$sd[nms])
+  }
+  if (scale == "mean") return((values - b_mean) / b_sd)
+  values / (b_sd^2)
+}
+
+#' Report Stage Metric
+#'
+#' Compute one common reporting metric for a stage/stream population.
+#'
+#' @param state Program state.
+#' @param stage Stage name.
+#' @param stream Optional stream filter.
+#' @param metric Metric name: `meanG`, `maxG`, `varG`, `H2`, or `accEBV`.
+#' @param traits Optional trait indices or names.
+#' @param use Cohort selection rule.
+#' @param baseline Baseline object. If `NULL`, uses
+#'   `state$sim$trait_baselines[["default"]]`.
+#' @param include_index Whether to include a weighted index.
+#' @param index_weights Optional index weights.
+#' @param custom Optional named list of metric functions.
+#' @param prefix Reserved for user naming conventions; values are returned
+#'   directly and are not forcibly renamed.
+#'
+#' @return Scalar or named numeric vector.
+#' @export
+bp_report_stage_metric <- function(
+  state,
+  stage,
+  stream = NULL,
+  metric = c("meanG", "maxG", "varG", "H2", "accEBV"),
+  traits = NULL,
+  use = c("latest_available", "previous_available", "latest", "all_available"),
+  baseline = NULL,
+  include_index = FALSE,
+  index_weights = NULL,
+  custom = NULL,
+  prefix = stage
+) {
+  metric <- match.arg(metric)
+  use <- match.arg(use)
+  rows <- bp_select_report_cohorts(state, stage = stage, stream = stream, use = use)
+  if (nrow(rows) == 0L) return(NA_real_)
+  metric_scale <- switch(metric, meanG = "mean", maxG = "mean", varG = "var", H2 = "none", accEBV = "none")
+
+  one_metric <- function(row) {
+    pop <- state$pops[[as.character(row$cohort_id)]]
+    if (!is.null(custom) && metric %in% names(custom)) {
+      fn <- custom[[metric]]
+      if (!is.function(fn)) stop("custom metrics must be functions.", call. = FALSE)
+      return(fn(state, pop, row, list(metric = metric, traits = traits, baseline = baseline, prefix = prefix)))
+    }
+
+    gv <- bp_apply_report_index(bp_report_matrix(pop, traits = traits, slot = "gv"), include_index, index_weights)
+    values <- switch(
+      metric,
+      meanG = colMeans(gv, na.rm = TRUE),
+      maxG = apply(gv, 2L, max, na.rm = TRUE),
+      varG = apply(gv, 2L, stats::var, na.rm = TRUE),
+      H2 = {
+        ph <- bp_apply_report_index(bp_report_matrix(pop, traits = traits, slot = "pheno"), include_index, index_weights)
+        out <- rep(NA_real_, ncol(gv))
+        for (j in seq_len(ncol(gv))) {
+          vg <- stats::var(gv[, j], na.rm = TRUE)
+          vp <- stats::var(ph[, j], na.rm = TRUE)
+          out[[j]] <- if (is.finite(vg) && is.finite(vp) && vp > 0) vg / vp else NA_real_
+        }
+        out
+      },
+      accEBV = {
+        ebv <- bp_apply_report_index(bp_report_matrix(pop, traits = traits, slot = "ebv"), include_index, index_weights)
+        out <- rep(NA_real_, ncol(gv))
+        for (j in seq_len(ncol(gv))) {
+          keep <- !is.na(gv[, j]) & !is.na(ebv[, j])
+          out[[j]] <- if (sum(keep) > 2L && stats::sd(gv[keep, j]) > 0 && stats::sd(ebv[keep, j]) > 0) {
+            stats::cor(gv[keep, j], ebv[keep, j])
+          } else {
+            NA_real_
+          }
+        }
+        out
+      },
+      stop(sprintf("Unknown metric: %s", metric), call. = FALSE)
+    )
+    values <- bp_named_metric(values, gv, include_index = include_index)
+    if (is.null(baseline)) baseline <- state$sim$trait_baselines[["default"]]
+    bp_scale_report_values(values, baseline, metric_scale)
+  }
+
+  vals <- lapply(seq_len(nrow(rows)), function(i) one_metric(rows[i, , drop = FALSE]))
+  if (use != "all_available") return(vals[[1L]])
+  vals
+}

@@ -803,7 +803,7 @@ test_that("put_stage_pop accepts source_ids and strategy text", {
   expect_true(any(state$event_log$output_id == cid & state$event_log$event_type == "stage_output"))
 })
 
-test_that("put_stage_pop can log per-individual cohort creation cost", {
+test_that("put_stage_pop can log stage output costs by individual or custom units", {
   state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
   state <- BreedingProgramSimulator:::put_stage_pop(
     state = state,
@@ -823,6 +823,39 @@ test_that("put_stage_pop can log per-individual cohort creation cost", {
   expect_equal(rows$n_units[[1]], 4)
   expect_equal(rows$unit_cost[[1]], 0.5)
   expect_equal(rows$total_cost[[1]], 2.0)
+
+  state <- BreedingProgramSimulator:::put_stage_pop(
+    state = state,
+    pop = data.frame(v = 1:377),
+    stage = "F1",
+    ready_in_years = 0,
+    cost_per_unit = 12,
+    cost_units = 22,
+    cost_event = "crossing",
+    cost_unit = "cross"
+  )
+
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  rows <- subset(state$cost_log, cohort_id == cid & event == "crossing")
+  expect_equal(nrow(rows), 1L)
+  expect_equal(rows$unit[[1]], "cross")
+  expect_equal(rows$n_units[[1]], 22)
+  expect_equal(rows$unit_cost[[1]], 12)
+  expect_equal(rows$total_cost[[1]], 264)
+
+  state <- BreedingProgramSimulator:::put_stage_pop(
+    state = state,
+    pop = data.frame(v = 1:3),
+    stage = "Nursery",
+    ready_in_years = 0,
+    cost_per_unit = 2,
+    cost_event = "grow_out"
+  )
+
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  rows <- subset(state$cost_log, cohort_id == cid & event == "grow_out")
+  expect_equal(rows$n_units[[1]], 3)
+  expect_equal(rows$total_cost[[1]], 6)
 })
 
 test_that("bp_record_pheno supports sparse matrices and trait names", {

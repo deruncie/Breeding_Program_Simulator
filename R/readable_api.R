@@ -13,9 +13,22 @@
 #' @export
 bp_init_state <- function(SP, dt = 0.25, start_time = 0, sim = list()) {
   tick <- as.integer(round(start_time / dt))
+  sim_defaults <- list(
+    SP = SP,
+    default_chip = 1L,
+    trait_baselines = list(
+      default = list(
+        label = "default",
+        traits = "trait1",
+        mean = stats::setNames(0, "trait1"),
+        sd = stats::setNames(1, "trait1"),
+        source = "default"
+      )
+    )
+  )
   state <- list(
     time = list(tick = tick, dt = as.numeric(dt), t = as.numeric(start_time)),
-    sim = utils::modifyList(list(SP = SP, default_chip = 1L), sim),
+    sim = utils::modifyList(sim_defaults, sim),
     pops = list(),
     cohorts = bp_empty_cohorts(),
     event_log = bp_empty_event_log(),
@@ -887,7 +900,7 @@ get_ready_pop <- function(
 
 #' Select Latest Available Cohort Bundle
 #'
-#' Convenience wrapper around [get_ready_pop()] with `policy = "latest_one"`.
+#' Convenience wrapper around `get_ready_pop()` with policy `"latest_one"`.
 #'
 #' @param state Program state.
 #' @param stage Stage name(s).
@@ -994,9 +1007,14 @@ select_current <- function(
 #' @param inherit_genotypes Whether to inherit genotype availability from source.
 #' @param selection_strategy Optional human-readable selection mechanism text.
 #' @param cross_strategy Optional human-readable crossing mechanism text.
-#' @param cost_per_individual Optional cost logged once per individual in `pop`.
-#' @param cost_event Event label used when `cost_per_individual` is provided.
-#' @param cost_unit Unit label used when `cost_per_individual` is provided.
+#' @param cost_per_unit Optional cost logged for this stage output. If
+#'   `cost_units = NULL`, units default to the number of individuals in `pop`.
+#' @param cost_units Optional number of cost units. Use this when cost is per
+#'   cross, family, tray, plot, or another unit that differs from individuals.
+#' @param cost_per_individual Deprecated compatibility alias for
+#'   `cost_per_unit` with individual units.
+#' @param cost_event Event label used when cost is logged.
+#' @param cost_unit Unit label used when cost is logged.
 #'
 #' @return Updated program state.
 #' @export
@@ -1013,6 +1031,8 @@ put_stage_pop <- function(
   inherit_genotypes = FALSE,
   selection_strategy = NA_character_,
   cross_strategy = NA_character_,
+  cost_per_unit = NULL,
+  cost_units = NULL,
   cost_per_individual = NULL,
   cost_event = "cohort_creation",
   cost_unit = "individual"
@@ -1092,15 +1112,24 @@ put_stage_pop <- function(
       source_ids = source_id_vec
     )
   }
-  if (!is.null(cost_per_individual)) {
+  if (is.null(cost_per_unit) && !is.null(cost_per_individual)) {
+    cost_per_unit <- cost_per_individual
+    if (is.null(cost_units)) cost_units <- pop_n_ind(pop)
+    if (identical(cost_unit, "individual")) cost_unit <- "individual"
+  }
+  if (!is.null(cost_per_unit)) {
+    n_cost_units <- if (is.null(cost_units)) pop_n_ind(pop) else as.numeric(cost_units)
+    if (length(n_cost_units) != 1L || is.na(n_cost_units) || n_cost_units < 0) {
+      stop("put_stage_pop: cost_units must be a single non-negative numeric value.", call. = FALSE)
+    }
     state <- bp_add_cost(
       state = state,
       stage = stage,
       cohort_id = new_cohort_id,
       event = as.character(cost_event %||% "cohort_creation"),
       unit = as.character(cost_unit %||% "individual"),
-      n_units = pop_n_ind(pop),
-      unit_cost = as.numeric(cost_per_individual)
+      n_units = n_cost_units,
+      unit_cost = as.numeric(cost_per_unit)
     )
   }
   state
@@ -2004,7 +2033,23 @@ run_phenotype_trial <- function(
 #' @export
 run_genotyping <- function(state, cfg) {
   stage_label <- as.character(cfg$input_stage %||% "unknown")
-  if (isTRUE(cfg$include_not_ready %||% FALSE)) {
+  if (!is.null(cfg$cohort_ids)) {
+    ids <- unique(as.character(cfg$cohort_ids))
+    ids <- ids[!is.na(ids) & nzchar(ids)]
+    ready <- state$cohorts[state$cohorts$cohort_id %in% ids, , drop = FALSE]
+    if (!is.null(cfg$input_stage)) {
+      ready <- ready[ready$stage %in% cfg$input_stage, , drop = FALSE]
+    }
+    if (!is.null(cfg$stream)) {
+      ready <- ready[ready$stream %in% cfg$stream, , drop = FALSE]
+    }
+    if (!isTRUE(cfg$include_inactive %||% FALSE)) {
+      ready <- ready[ready$active, , drop = FALSE]
+    }
+    if (!isTRUE(cfg$include_not_ready %||% FALSE)) {
+      ready <- ready[ready$available_tick <= as.integer(state$time$tick), , drop = FALSE]
+    }
+  } else if (isTRUE(cfg$include_not_ready %||% FALSE)) {
     ready <- state$cohorts
     if (!is.null(cfg$input_stage)) {
       ready <- ready[ready$stage %in% cfg$input_stage, , drop = FALSE]

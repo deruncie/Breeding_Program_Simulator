@@ -37,5 +37,5 @@ select_latest_available(
 `NULL` or a source bundle list (`pop`, `source_ids`, ...).
 }
 \description{
-Convenience wrapper around [get_ready_pop()] with `policy = "latest_one"`.
+Convenience wrapper around `get_ready_pop()` with policy `"latest_one"`.
 }
