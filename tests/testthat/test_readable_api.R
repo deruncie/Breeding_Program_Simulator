@@ -1077,3 +1077,40 @@ test_that("run_phenotype_trial recycles scalar env_means across locations", {
   pvals <- subset(state$phenotype_log, stage == "AYT" & environment %in% c("1", "2", "3", "4"))$p_value
   expect_equal(sort(unique(round(pvals, 8))), rep(round(stats::pnorm(0), 8), 1L))
 })
+
+test_that("bp_gxe_gv_at_z returns AlphaSimR GxE genetic values at requested environment", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  founder <- quickHaplo(nInd = 16, nChr = 1, segSites = 40)
+  SP <- SimParam$new(founder)
+  SP$addTraitAEG(10, varGxE = 1, varEnv = 4)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  pop <- newPop(founder, simParam = SP)
+  z <- 1.25
+
+  out <- BreedingProgramSimulator:::bp_gxe_gv_at_z(pop, z = z, state = state, traits = 1L)
+  expect_equal(dim(out), c(pop@nInd, 1L))
+  expect_equal(
+    as.numeric(out[, 1L]),
+    as.numeric(pop@gv[, 1L] + pop@gxe[[1L]] * z),
+    tolerance = 1e-10
+  )
+})
+
+test_that("bp_gxe_gv_at_z falls back to envVar one for non-GxE traits", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  founder <- quickHaplo(nInd = 10, nChr = 1, segSites = 30)
+  SP <- SimParam$new(founder)
+  SP$addTraitA(10)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  pop <- newPop(founder, simParam = SP)
+  out <- BreedingProgramSimulator:::bp_gxe_gv_at_z(pop, z = 2, state = state, traits = 1L)
+
+  expect_equal(dim(out), c(pop@nInd, 1L))
+  expect_equal(as.numeric(out[, 1L]), as.numeric(pop@gv[, 1L]), tolerance = 1e-10)
+})

@@ -8,7 +8,7 @@ bp_report_stage_metric(
   state,
   stage,
   stream = NULL,
-  metric = c("meanG", "maxG", "varG", "H2", "accEBV"),
+  metric = c("meanG", "maxG", "varG", "H2", "accEBV", "wf_accEBV"),
   traits = NULL,
   use = c("latest_available", "previous_available", "latest", "all_available"),
   baseline = NULL,
@@ -25,7 +25,8 @@ bp_report_stage_metric(
 
 \item{stream}{Optional stream filter.}
 
-\item{metric}{Metric name: `meanG`, `maxG`, `varG`, `H2`, or `accEBV`.}
+\item{metric}{Metric name: `meanG`, `maxG`, `varG`, `H2`, `accEBV`, or
+`wf_accEBV`.}
 
 \item{traits}{Optional trait indices or names.}
 

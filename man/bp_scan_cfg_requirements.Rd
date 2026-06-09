@@ -20,5 +20,7 @@ a source-location comment; other fields are filled with `XX`. Nested references
 such as `cfg$PYT$locs` are rendered as nested list blocks. When multiple
 files are supplied, fields used by more than one scheme are grouped first
 with a comment listing the schemes they apply to, followed by per-scheme
-sections for fields used by only one script.
+sections for fields used by only one script. Fields assigned inside a script
+are treated as script-derived and excluded unless the assignment also reads
+the same cfg field.
 }

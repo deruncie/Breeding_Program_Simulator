@@ -322,6 +322,7 @@ bp_report_matrix <- function(pop, traits = NULL, slot = c("gv", "pheno", "ebv"))
   mat <- switch(slot, gv = pop@gv, pheno = pop@pheno, ebv = pop@ebv)
   if (is.null(mat)) return(matrix(numeric(0), nrow = pop_n_ind(pop), ncol = 0L))
   mat <- as.matrix(mat)
+  if (ncol(mat) == 0L) return(mat)
   if (is.null(traits)) return(mat)
   if (is.numeric(traits)) return(mat[, as.integer(traits), drop = FALSE])
   idx <- match(as.character(traits), colnames(mat))
@@ -363,6 +364,41 @@ bp_scale_report_values <- function(values, baseline, scale) {
   values / (b_sd^2)
 }
 
+bp_report_prediction_matrix <- function(pop, traits = NULL, include_index = FALSE, index_weights = NULL) {
+  ebv <- bp_report_matrix(pop, traits = traits, slot = "ebv")
+  if (ncol(ebv) > 0L && any(!is.na(ebv))) {
+    return(bp_apply_report_index(ebv, include_index, index_weights))
+  }
+  ph <- bp_report_matrix(pop, traits = traits, slot = "pheno")
+  if (ncol(ph) > 0L && any(!is.na(ph))) {
+    return(bp_apply_report_index(ph, include_index, index_weights))
+  }
+  matrix(NA_real_, nrow = pop_n_ind(pop), ncol = 0L)
+}
+
+bp_within_family_accuracy <- function(pop, gv, traits = NULL, include_index = FALSE, index_weights = NULL) {
+  pred <- bp_report_prediction_matrix(pop, traits = traits, include_index = include_index, index_weights = index_weights)
+  if (ncol(pred) == 0L) return(rep(NA_real_, ncol(gv)))
+
+  fam <- paste(pop@mother, pop@father)
+  out <- rep(NA_real_, ncol(gv))
+  for (j in seq_len(ncol(gv))) {
+    p <- as.numeric(pred[, j])
+    a <- as.numeric(gv[, j])
+    keep <- !is.na(p) & !is.na(a)
+    if (sum(keep) < 3L) next
+    p <- p[keep]
+    a <- a[keep]
+    f <- fam[keep]
+    if (length(unique(f)) > 1L) {
+      p <- stats::resid(stats::lm(p ~ f))
+      a <- stats::resid(stats::lm(a ~ f))
+    }
+    out[[j]] <- suppressWarnings(stats::cor(p, a, use = "complete.obs"))
+  }
+  out
+}
+
 #' Report Stage Metric
 #'
 #' Compute one common reporting metric for a stage/stream population.
@@ -370,7 +406,8 @@ bp_scale_report_values <- function(values, baseline, scale) {
 #' @param state Program state.
 #' @param stage Stage name.
 #' @param stream Optional stream filter.
-#' @param metric Metric name: `meanG`, `maxG`, `varG`, `H2`, or `accEBV`.
+#' @param metric Metric name: `meanG`, `maxG`, `varG`, `H2`, `accEBV`, or
+#'   `wf_accEBV`.
 #' @param traits Optional trait indices or names.
 #' @param use Cohort selection rule.
 #' @param baseline Baseline object. If `NULL`, uses
@@ -387,7 +424,7 @@ bp_report_stage_metric <- function(
   state,
   stage,
   stream = NULL,
-  metric = c("meanG", "maxG", "varG", "H2", "accEBV"),
+  metric = c("meanG", "maxG", "varG", "H2", "accEBV", "wf_accEBV"),
   traits = NULL,
   use = c("latest_available", "previous_available", "latest", "all_available"),
   baseline = NULL,
@@ -400,7 +437,7 @@ bp_report_stage_metric <- function(
   use <- match.arg(use)
   rows <- bp_select_report_cohorts(state, stage = stage, stream = stream, use = use)
   if (nrow(rows) == 0L) return(NA_real_)
-  metric_scale <- switch(metric, meanG = "mean", maxG = "mean", varG = "var", H2 = "none", accEBV = "none")
+  metric_scale <- switch(metric, meanG = "mean", maxG = "mean", varG = "var", H2 = "none", accEBV = "none", wf_accEBV = "none")
 
   one_metric <- function(row) {
     pop <- state$pops[[as.character(row$cohort_id)]]
@@ -427,18 +464,21 @@ bp_report_stage_metric <- function(
         out
       },
       accEBV = {
-        ebv <- bp_apply_report_index(bp_report_matrix(pop, traits = traits, slot = "ebv"), include_index, index_weights)
+        ebv <- bp_report_prediction_matrix(pop, traits = traits, include_index = include_index, index_weights = index_weights)
         out <- rep(NA_real_, ncol(gv))
-        for (j in seq_len(ncol(gv))) {
-          keep <- !is.na(gv[, j]) & !is.na(ebv[, j])
-          out[[j]] <- if (sum(keep) > 2L && stats::sd(gv[keep, j]) > 0 && stats::sd(ebv[keep, j]) > 0) {
-            stats::cor(gv[keep, j], ebv[keep, j])
-          } else {
-            NA_real_
+        if (ncol(ebv) > 0L) {
+          for (j in seq_len(ncol(gv))) {
+            keep <- !is.na(gv[, j]) & !is.na(ebv[, j])
+            out[[j]] <- if (sum(keep) > 2L && stats::sd(gv[keep, j]) > 0 && stats::sd(ebv[keep, j]) > 0) {
+              stats::cor(gv[keep, j], ebv[keep, j])
+            } else {
+              NA_real_
+            }
           }
         }
         out
       },
+      wf_accEBV = bp_within_family_accuracy(pop, gv, traits = traits, include_index = include_index, index_weights = index_weights),
       stop(sprintf("Unknown metric: %s", metric), call. = FALSE)
     )
     values <- bp_named_metric(values, gv, include_index = include_index)

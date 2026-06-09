@@ -8,7 +8,9 @@ bp_check_cfg_requirements(
   cfg = list(),
   files,
   cfg_file = NULL,
-  update_file = !is.null(cfg_file)
+  update_file = !is.null(cfg_file),
+  import_cfg_file = NULL,
+  rewrite_file = FALSE
 )
 }
 \arguments{
@@ -20,6 +22,13 @@ bp_check_cfg_requirements(
 
 \item{update_file}{If `TRUE` and `cfg_file` is supplied, append missing cfg
 entries to `cfg_file` without changing existing lines.}
+
+\item{import_cfg_file}{Optional existing cfg `.R` file used as a source of
+values when creating or rewriting a grouped cfg template.}
+
+\item{rewrite_file}{If `TRUE`, write a fresh grouped cfg template to
+`cfg_file`, preserving values that can be parsed from `cfg_file`,
+`import_cfg_file`, or `cfg`.}
 }
 \value{
 Structured check object.
@@ -27,6 +36,11 @@ Structured check object.
 \description{
 Compare a config list against direct `cfg$...` references in one or more
 scheme files.
-Printing the result emits the same copyable, grouped config skeleton as
-[bp_scan_cfg_requirements()].
+If no `cfg_file` is supplied, printing the result emits the same copyable,
+grouped config skeleton as [bp_scan_cfg_requirements()]. If `cfg_file`
+exists, printing reports only missing entries as list elements that can be
+pasted into the existing file, fields present in the file but overwritten by
+the scanned schemes, and fields present in the file but unused by the scanned
+schemes. If `cfg_file` does not exist, it is created with the full grouped
+template.
 }

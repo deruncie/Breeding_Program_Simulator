@@ -1439,6 +1439,72 @@ bp_env_p_from_latent <- function(simParam, traits, latent_env) {
   rep(stats::pnorm(latent_env), length(traits))
 }
 
+#' Genetic Values at a GxE Environment
+#'
+#' Return AlphaSimR genetic values evaluated at a specified GxE environment.
+#'
+#' @param pop AlphaSimR `Pop` object.
+#' @param z Environmental coordinate. A scalar is recycled across `traits`;
+#'   otherwise supply one value per trait. Values are interpreted on the same
+#'   environmental scale AlphaSimR uses for the trait, so `p` is computed as
+#'   `pnorm(z, sd = sqrt(envVar))`.
+#' @param state BPS state containing `state$sim$SP`.
+#' @param traits Trait index/vector. Default `1L`.
+#'
+#' @return Numeric matrix with one column per requested trait and one row per
+#'   individual in `pop`.
+#' @export
+bp_gxe_gv_at_z <- function(pop, z, state, traits = 1L) {
+  if (!requireNamespace("AlphaSimR", quietly = TRUE)) {
+    stop("bp_gxe_gv_at_z requires the AlphaSimR package.", call. = FALSE)
+  }
+  SP <- state$sim$SP
+  if (is.null(SP)) {
+    stop("bp_gxe_gv_at_z: state$sim$SP is required.", call. = FALSE)
+  }
+  if (!methods::is(pop, "Pop")) {
+    stop("bp_gxe_gv_at_z: pop must be an AlphaSimR Pop object.", call. = FALSE)
+  }
+
+  traits <- as.integer(traits %||% 1L)
+  if (length(traits) == 0L || any(is.na(traits)) || any(traits < 1L) || any(traits > SP$nTraits)) {
+    stop("bp_gxe_gv_at_z: traits must be valid trait indices in state$sim$SP.", call. = FALSE)
+  }
+
+  z <- as.numeric(z)
+  if (length(z) == 1L) {
+    z <- rep(z, length(traits))
+  }
+  if (length(z) != length(traits) || any(is.na(z))) {
+    stop("bp_gxe_gv_at_z: z must be one non-missing numeric value or one value per trait.", call. = FALSE)
+  }
+
+  p <- numeric(length(traits))
+  for (i in seq_along(traits)) {
+    tr <- SP$traits[[traits[[i]]]]
+    envVar <- if (!is.null(tr) && "envVar" %in% methods::slotNames(tr)) tr@envVar else NULL
+    if (is.null(envVar)) envVar <- 1
+    envVar <- as.numeric(envVar)
+    if (length(envVar) != 1L || is.na(envVar) || envVar <= 0) {
+      stop("bp_gxe_gv_at_z: trait envVar must be a single positive numeric value.", call. = FALSE)
+    }
+    p[[i]] <- stats::pnorm(z[[i]], sd = sqrt(envVar))
+  }
+
+  out <- AlphaSimR::setPheno(
+    pop,
+    H2 = 1,
+    p = p,
+    traits = traits,
+    onlyPheno = TRUE,
+    simParam = SP
+  )
+  if (is.null(dim(out))) {
+    out <- matrix(out, ncol = length(traits))
+  }
+  out
+}
+
 # Pure helper: merge one or more AlphaSimR pops.
 merge_pops <- function(pop_list) {
   if (length(pop_list) == 1L) return(pop_list[[1L]])

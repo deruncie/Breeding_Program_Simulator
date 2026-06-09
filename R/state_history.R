@@ -564,12 +564,84 @@ bp_set_trait_baseline <- function(
   state
 }
 
+bp_strip_r_comment <- function(line) {
+  chars <- strsplit(line, "", fixed = TRUE)[[1L]]
+  if (length(chars) == 0L) return(line)
+  quote <- NULL
+  escaped <- FALSE
+  out <- character(0)
+  for (ch in chars) {
+    if (!is.null(quote)) {
+      out <- c(out, ch)
+      if (escaped) {
+        escaped <- FALSE
+      } else if (identical(ch, "\\")) {
+        escaped <- TRUE
+      } else if (identical(ch, quote)) {
+        quote <- NULL
+      }
+      next
+    }
+    if (ch %in% c("\"", "'")) {
+      quote <- ch
+      out <- c(out, ch)
+      next
+    }
+    if (identical(ch, "#")) break
+    out <- c(out, ch)
+  }
+  paste(out, collapse = "")
+}
+
+bp_mask_r_strings <- function(line) {
+  chars <- strsplit(line, "", fixed = TRUE)[[1L]]
+  if (length(chars) == 0L) return(line)
+  quote <- NULL
+  escaped <- FALSE
+  out <- character(0)
+  for (ch in chars) {
+    if (!is.null(quote)) {
+      if (escaped) {
+        escaped <- FALSE
+      } else if (identical(ch, "\\")) {
+        escaped <- TRUE
+      } else if (identical(ch, quote)) {
+        quote <- NULL
+      }
+      out <- c(out, " ")
+      next
+    }
+    if (ch %in% c("\"", "'")) {
+      quote <- ch
+      out <- c(out, " ")
+      next
+    }
+    out <- c(out, ch)
+  }
+  paste(out, collapse = "")
+}
+
 bp_cfg_paths_in_text <- function(line) {
+  line <- bp_mask_r_strings(bp_strip_r_comment(line))
   m <- gregexpr("cfg\\$[A-Za-z.][A-Za-z0-9_.]*(?:\\$[A-Za-z.][A-Za-z0-9_.]*)*", line, perl = TRUE)[[1]]
   if (m[[1L]] < 0L) return(character(0))
   out <- regmatches(line, list(m))[[1L]]
   out <- sub("^cfg\\$", "", out)
   unique(gsub("$", ".", out, fixed = TRUE))
+}
+
+bp_cfg_assignment_in_line <- function(line) {
+  line <- bp_strip_r_comment(line)
+  exprs <- tryCatch(parse(text = line, keep.source = FALSE), error = function(e) expression())
+  if (length(exprs) == 0L) return(NULL)
+  for (expr in as.list(exprs)) {
+    if (!is.call(expr) || !(as.character(expr[[1L]]) %in% c("<-", "="))) next
+    lhs <- bp_cfg_lhs_path(expr[[2L]])
+    if (is.na(lhs) || !nzchar(lhs)) next
+    rhs_fields <- bp_cfg_paths_in_text(paste(deparse(expr[[3L]], width.cutoff = 500L), collapse = " "))
+    return(list(field = lhs, self_referenced = lhs %in% rhs_fields))
+  }
+  NULL
 }
 
 bp_cfg_ref_for_field <- function(field) {
@@ -581,6 +653,7 @@ bp_cfg_name_for_skeleton <- function(field) {
 }
 
 bp_cfg_default_for_field <- function(line, field) {
+  line <- bp_strip_r_comment(line)
   ref <- bp_cfg_ref_for_field(field)
   pattern <- paste0(gsub("([$])", "\\\\\\1", ref), "\\s*%\\|\\|%\\s*")
   m <- regexpr(pattern, line, perl = TRUE)
@@ -657,7 +730,7 @@ bp_cfg_default_for_field <- function(line, field) {
   extract_fragment_default()
 }
 
-bp_cfg_leaf_info <- function(refs, field) {
+bp_cfg_leaf_info <- function(refs, field, values = NULL) {
   rows <- refs[refs$field == field, , drop = FALSE]
   def <- NA_character_
   def_row <- NA_integer_
@@ -671,9 +744,10 @@ bp_cfg_leaf_info <- function(refs, field) {
       def <- defs[[def_row]]
     }
   }
-  value <- if (is.na(def)) "XX" else def
+  imported <- !is.null(values) && field %in% names(values) && nzchar(values[[field]])
+  value <- if (isTRUE(imported)) values[[field]] else if (is.na(def)) "XX" else def
   comment <- ""
-  if (!is.na(def) && nrow(rows) > 0L && !is.na(def_row)) {
+  if (!isTRUE(imported) && !is.na(def) && nrow(rows) > 0L && !is.na(def_row)) {
     src <- sprintf("%s:%d", basename(rows$file[[def_row]]), as.integer(rows$line[[def_row]]))
     comment <- sprintf("  # default used in %s", src)
   }
@@ -691,7 +765,7 @@ bp_cfg_child_names <- function(fields, prefix = "") {
   unique(sort(sub("\\..*$", "", rel)))
 }
 
-bp_cfg_render_node_items <- function(refs, fields, prefix = "", indent = 2L) {
+bp_cfg_render_node_items <- function(refs, fields, prefix = "", indent = 2L, values = NULL) {
   names <- bp_cfg_child_names(fields, prefix = prefix)
   if (length(names) == 0L) return(character(0))
   out <- character(0)
@@ -702,7 +776,7 @@ bp_cfg_render_node_items <- function(refs, fields, prefix = "", indent = 2L) {
     has_children <- any(startsWith(fields, paste0(full, ".")))
     comma <- if (i < length(names)) "," else ""
     if (has_children) {
-      inner <- bp_cfg_render_node_items(refs, fields, prefix = full, indent = indent + 2L)
+      inner <- bp_cfg_render_node_items(refs, fields, prefix = full, indent = indent + 2L, values = values)
       out <- c(
         out,
         sprintf("%s%s = list(", pad, nm),
@@ -710,7 +784,7 @@ bp_cfg_render_node_items <- function(refs, fields, prefix = "", indent = 2L) {
         sprintf("%s)%s", pad, comma)
       )
     } else {
-      leaf <- bp_cfg_leaf_info(refs, full)
+      leaf <- bp_cfg_leaf_info(refs, full, values = values)
       out <- c(out, sprintf("%s%s = %s%s%s", pad, nm, leaf$value, comma, leaf$comment))
     }
   }
@@ -728,10 +802,10 @@ bp_cfg_add_trailing_comma <- function(lines) {
   lines
 }
 
-bp_cfg_section_lines <- function(refs, fields, comment = NULL) {
+bp_cfg_section_lines <- function(refs, fields, comment = NULL, values = NULL) {
   fields <- sort(unique(fields))
   if (length(fields) == 0L) return(character(0))
-  lines <- bp_cfg_render_node_items(refs, fields, prefix = "", indent = 2L)
+  lines <- bp_cfg_render_node_items(refs, fields, prefix = "", indent = 2L, values = values)
   if (!is.null(comment) && nzchar(comment)) {
     lines <- c(sprintf("  # %s", comment), lines)
   }
@@ -750,7 +824,7 @@ bp_cfg_finalize_sections <- function(sections) {
   out
 }
 
-bp_cfg_build_skeleton <- function(refs, fields) {
+bp_cfg_build_skeleton <- function(refs, fields, values = NULL) {
   if (length(fields) == 0L) return("cfg <- list(\n)")
   fields <- sort(unique(fields))
   file_sets <- lapply(fields, function(field) {
@@ -767,7 +841,8 @@ bp_cfg_build_skeleton <- function(refs, fields) {
       sections[[length(sections) + 1L]] <- bp_cfg_section_lines(
         refs,
         section_fields,
-        comment = sprintf("Shared across: %s", key)
+        comment = sprintf("Shared across: %s", key),
+        values = values
       )
     }
   }
@@ -779,7 +854,7 @@ bp_cfg_build_skeleton <- function(refs, fields) {
       section_fields <- unique_fields[vapply(file_sets[unique_fields], function(x) identical(x, scheme), logical(1))]
       if (length(section_fields) == 0L) next
       comment <- if (length(scheme_names) > 1L) sprintf("%s only", scheme) else NULL
-      sections[[length(sections) + 1L]] <- bp_cfg_section_lines(refs, section_fields, comment = comment)
+      sections[[length(sections) + 1L]] <- bp_cfg_section_lines(refs, section_fields, comment = comment, values = values)
     }
   }
 
@@ -787,12 +862,19 @@ bp_cfg_build_skeleton <- function(refs, fields) {
   paste(c("cfg <- list(", lines, ")"), collapse = "\n")
 }
 
+bp_cfg_build_missing_snippet <- function(refs, fields) {
+  fields <- sort(unique(fields))
+  if (length(fields) == 0L) return("# Missing cfg entries: none")
+  lines <- bp_cfg_finalize_sections(list(bp_cfg_section_lines(refs, fields, comment = "Missing cfg entries")))
+  paste(lines, collapse = "\n")
+}
+
 bp_cfg_build_update_block <- function(refs, fields, files, existing_cfg = TRUE) {
   fields <- sort(unique(fields))
   if (length(fields) == 0L) return(character(0))
-  lines <- bp_cfg_finalize_sections(list(bp_cfg_section_lines(refs, fields, comment = NULL)))
   scheme_txt <- paste(sort(unique(basename(files))), collapse = ", ")
   if (isTRUE(existing_cfg)) {
+    lines <- bp_cfg_finalize_sections(list(bp_cfg_section_lines(refs, fields, comment = NULL)))
     c(
       "# ---- BPS missing cfg entries ----",
       sprintf("# Schemes checked: %s", scheme_txt),
@@ -803,14 +885,7 @@ bp_cfg_build_update_block <- function(refs, fields, files, existing_cfg = TRUE) 
       "# ---- end BPS missing cfg entries ----"
     )
   } else {
-    c(
-      "# ---- BPS cfg entries ----",
-      sprintf("# Schemes checked: %s", scheme_txt),
-      "cfg <- list(",
-      lines,
-      ")",
-      "# ---- end BPS cfg entries ----"
-    )
+    unlist(strsplit(bp_cfg_build_skeleton(refs, fields), "\n", fixed = TRUE), use.names = FALSE)
   }
 }
 
@@ -831,6 +906,42 @@ bp_cfg_fields_from_list_call <- function(expr, prefix = "") {
     }
   }
   unique(out)
+}
+
+bp_cfg_deparse_expr <- function(expr) {
+  paste(deparse(expr, width.cutoff = 500L), collapse = " ")
+}
+
+bp_cfg_values_from_list_call <- function(expr, prefix = "") {
+  if (!is.call(expr) || !identical(as.character(expr[[1L]]), "list")) return(character(0))
+  args <- as.list(expr)[-1L]
+  nms <- names(args)
+  out <- character(0)
+  for (i in seq_along(args)) {
+    nm <- nms[[i]]
+    if (is.null(nm) || is.na(nm) || !nzchar(nm)) next
+    field <- if (nzchar(prefix)) paste(prefix, nm, sep = ".") else nm
+    if (is.call(args[[i]]) && identical(as.character(args[[i]][[1L]]), "list")) {
+      out <- c(out, bp_cfg_values_from_list_call(args[[i]], prefix = field))
+    } else {
+      out <- c(out, stats::setNames(bp_cfg_deparse_expr(args[[i]]), field))
+    }
+  }
+  out
+}
+
+bp_cfg_values_from_rhs <- function(expr) {
+  if (is.call(expr) && identical(as.character(expr[[1L]]), "list")) {
+    return(bp_cfg_values_from_list_call(expr))
+  }
+  if (!is.call(expr)) return(character(0))
+  out <- character(0)
+  for (i in seq_along(expr)[-1L]) {
+    if (is.call(expr[[i]]) && identical(as.character(expr[[i]][[1L]]), "list")) {
+      out <- c(out, bp_cfg_values_from_list_call(expr[[i]]))
+    }
+  }
+  out
 }
 
 bp_cfg_lhs_path <- function(expr) {
@@ -876,6 +987,24 @@ bp_cfg_fields_from_cfg_file <- function(cfg_file) {
   sort(unique(out))
 }
 
+bp_cfg_values_from_cfg_file <- function(cfg_file) {
+  if (is.null(cfg_file) || !file.exists(cfg_file)) return(character(0))
+  exprs <- tryCatch(parse(cfg_file), error = function(e) expression())
+  out <- character(0)
+  for (expr in as.list(exprs)) {
+    if (!is.call(expr) || !(as.character(expr[[1L]]) %in% c("<-", "="))) next
+    lhs <- bp_cfg_lhs_path(expr[[2L]])
+    if (is.na(lhs)) next
+    rhs <- expr[[3L]]
+    if (!nzchar(lhs)) {
+      out <- c(out, bp_cfg_values_from_rhs(rhs))
+    } else {
+      out <- c(out, stats::setNames(bp_cfg_deparse_expr(rhs), lhs))
+    }
+  }
+  bp_cfg_keep_last_named(out)
+}
+
 bp_cfg_file_has_cfg <- function(cfg_file) {
   if (is.null(cfg_file) || !file.exists(cfg_file)) return(FALSE)
   exprs <- tryCatch(parse(cfg_file), error = function(e) expression())
@@ -903,6 +1032,36 @@ bp_cfg_fields_from_list_object <- function(x, prefix = "") {
   sort(unique(out))
 }
 
+bp_cfg_value_from_object <- function(x) {
+  paste(deparse(x, width.cutoff = 500L), collapse = " ")
+}
+
+bp_cfg_values_from_list_object <- function(x, prefix = "") {
+  if (!is.list(x)) return(character(0))
+  out <- character(0)
+  for (nm in names(x)) {
+    if (is.null(nm) || is.na(nm) || !nzchar(nm)) next
+    field <- if (nzchar(prefix)) paste(prefix, nm, sep = ".") else nm
+    if (is.list(x[[nm]]) && !is.data.frame(x[[nm]])) {
+      out <- c(out, bp_cfg_values_from_list_object(x[[nm]], prefix = field))
+    } else {
+      out <- c(out, stats::setNames(bp_cfg_value_from_object(x[[nm]]), field))
+    }
+  }
+  out
+}
+
+bp_cfg_keep_last_named <- function(x) {
+  if (length(x) == 0L) return(character(0))
+  nms <- names(x)
+  keep <- !is.na(nms) & nzchar(nms)
+  x <- x[keep]
+  if (length(x) == 0L) return(character(0))
+  rev_x <- rev(x)
+  rev_x <- rev_x[!duplicated(names(rev_x))]
+  rev(rev_x)
+}
+
 bp_write_missing_cfg_entries <- function(cfg_file, scan, existing_fields) {
   missing <- setdiff(scan$fields, existing_fields)
   has_cfg <- bp_cfg_file_has_cfg(cfg_file)
@@ -914,6 +1073,14 @@ bp_write_missing_cfg_entries <- function(cfg_file, scan, existing_fields) {
   missing
 }
 
+bp_cfg_import_values <- function(cfg = list(), cfg_file = NULL, import_cfg_file = NULL) {
+  vals <- character(0)
+  if (!is.null(import_cfg_file)) vals <- c(vals, bp_cfg_values_from_cfg_file(import_cfg_file))
+  if (!is.null(cfg_file)) vals <- c(vals, bp_cfg_values_from_cfg_file(cfg_file))
+  vals <- c(vals, bp_cfg_values_from_list_object(cfg))
+  bp_cfg_keep_last_named(vals)
+}
+
 #' Scan Scheme Config Requirements
 #'
 #' Scan R files for direct `cfg$...` references without evaluating them.
@@ -923,7 +1090,9 @@ bp_write_missing_cfg_entries <- function(cfg_file, scan, existing_fields) {
 #' such as `cfg$PYT$locs` are rendered as nested list blocks. When multiple
 #' files are supplied, fields used by more than one scheme are grouped first
 #' with a comment listing the schemes they apply to, followed by per-scheme
-#' sections for fields used by only one script.
+#' sections for fields used by only one script. Fields assigned inside a script
+#' are treated as script-derived and excluded unless the assignment also reads
+#' the same cfg field.
 #'
 #' @param files One or more R script paths.
 #'
@@ -932,9 +1101,22 @@ bp_write_missing_cfg_entries <- function(cfg_file, scan, existing_fields) {
 bp_scan_cfg_requirements <- function(files) {
   files <- as.character(files)
   rows <- list()
+  script_assigned <- character(0)
+  assigned_rows <- list()
   for (file in files) {
     lines <- readLines(file, warn = FALSE)
     for (i in seq_along(lines)) {
+      assignment <- bp_cfg_assignment_in_line(lines[[i]])
+      if (!is.null(assignment) && !isTRUE(assignment$self_referenced)) {
+        script_assigned <- c(script_assigned, assignment$field)
+        assigned_rows[[length(assigned_rows) + 1L]] <- data.frame(
+          file = file,
+          line = as.integer(i),
+          field = assignment$field,
+          text = lines[[i]],
+          stringsAsFactors = FALSE
+        )
+      }
       fields <- bp_cfg_paths_in_text(lines[[i]])
       if (length(fields) == 0L) next
       for (field in fields) {
@@ -954,11 +1136,20 @@ bp_scan_cfg_requirements <- function(files) {
   } else {
     do.call(rbind, rows)
   }
+  assigned_refs <- if (length(assigned_rows) == 0L) {
+    data.frame(file = character(), line = integer(), field = character(), text = character(), stringsAsFactors = FALSE)
+  } else {
+    do.call(rbind, assigned_rows)
+  }
+  script_assigned <- sort(unique(script_assigned))
+  if (nrow(refs) > 0L && length(script_assigned) > 0L) {
+    refs <- refs[!(refs$field %in% script_assigned), , drop = FALSE]
+  }
   fields <- sort(unique(refs$field))
   required <- sort(unique(refs$field[!refs$has_inline_default]))
   defaulted <- sort(setdiff(fields, required))
   skeleton <- bp_cfg_build_skeleton(refs, fields)
-  out <- list(refs = refs, fields = fields, files = files, required = required, defaulted = defaulted, skeleton = skeleton)
+  out <- list(refs = refs, fields = fields, files = files, assigned_in_scripts = script_assigned, assigned_refs = assigned_refs, required = required, defaulted = defaulted, skeleton = skeleton)
   class(out) <- "bp_cfg_requirements"
   out
 }
@@ -977,44 +1168,97 @@ bp_cfg_has_path <- function(cfg, path) {
 #'
 #' Compare a config list against direct `cfg$...` references in one or more
 #' scheme files.
-#' Printing the result emits the same copyable, grouped config skeleton as
-#' [bp_scan_cfg_requirements()].
+#' If no `cfg_file` is supplied, printing the result emits the same copyable,
+#' grouped config skeleton as [bp_scan_cfg_requirements()]. If `cfg_file`
+#' exists, printing reports only missing entries as list elements that can be
+#' pasted into the existing file, fields present in the file but overwritten by
+#' the scanned schemes, and fields present in the file but unused by the scanned
+#' schemes. If `cfg_file` does not exist, it is created with the full grouped
+#' template.
 #'
 #' @param cfg Config list.
 #' @param files One or more R script paths.
 #' @param cfg_file Optional cfg `.R` file to inspect and update.
 #' @param update_file If `TRUE` and `cfg_file` is supplied, append missing cfg
 #'   entries to `cfg_file` without changing existing lines.
+#' @param import_cfg_file Optional existing cfg `.R` file used as a source of
+#'   values when creating or rewriting a grouped cfg template.
+#' @param rewrite_file If `TRUE`, write a fresh grouped cfg template to
+#'   `cfg_file`, preserving values that can be parsed from `cfg_file`,
+#'   `import_cfg_file`, or `cfg`.
 #'
 #' @return Structured check object.
 #' @export
-bp_check_cfg_requirements <- function(cfg = list(), files, cfg_file = NULL, update_file = !is.null(cfg_file)) {
+bp_check_cfg_requirements <- function(
+  cfg = list(),
+  files,
+  cfg_file = NULL,
+  update_file = !is.null(cfg_file),
+  import_cfg_file = NULL,
+  rewrite_file = FALSE
+) {
   scan <- bp_scan_cfg_requirements(files)
   cfg_fields <- bp_cfg_fields_from_list_object(cfg)
+  cfg_file_existed <- !is.null(cfg_file) && file.exists(cfg_file)
   file_fields <- bp_cfg_fields_from_cfg_file(cfg_file)
+  imported_values <- bp_cfg_import_values(cfg = cfg, cfg_file = cfg_file, import_cfg_file = import_cfg_file)
+  grouped_skeleton <- bp_cfg_build_skeleton(scan$refs, scan$fields, values = imported_values)
   all_present_fields <- sort(unique(c(cfg_fields, file_fields)))
   present <- scan$fields %in% all_present_fields
+  missing_before_update <- scan$fields[!present]
+  missing_skeleton <- if (!is.null(cfg_file) && cfg_file_existed) {
+    bp_cfg_build_missing_snippet(scan$refs, missing_before_update)
+  } else {
+    grouped_skeleton
+  }
   added_to_file <- character(0)
-  if (!is.null(cfg_file) && isTRUE(update_file)) {
-    added_to_file <- bp_write_missing_cfg_entries(cfg_file, scan, existing_fields = file_fields)
+  rewritten_file <- FALSE
+  if (!is.null(cfg_file) && isTRUE(rewrite_file)) {
+    writeLines(unlist(strsplit(grouped_skeleton, "\n", fixed = TRUE), use.names = FALSE), cfg_file, useBytes = TRUE)
+    rewritten_file <- TRUE
+    file_fields <- bp_cfg_fields_from_cfg_file(cfg_file)
+    all_present_fields <- sort(unique(c(cfg_fields, file_fields)))
+    present <- scan$fields %in% all_present_fields
+  } else if (!is.null(cfg_file) && isTRUE(update_file)) {
+    if (isTRUE(cfg_file_existed)) {
+      added_to_file <- bp_write_missing_cfg_entries(cfg_file, scan, existing_fields = file_fields)
+    } else {
+      writeLines(unlist(strsplit(grouped_skeleton, "\n", fixed = TRUE), use.names = FALSE), cfg_file, useBytes = TRUE)
+      added_to_file <- missing_before_update
+    }
     file_fields <- bp_cfg_fields_from_cfg_file(cfg_file)
     all_present_fields <- sort(unique(c(cfg_fields, file_fields)))
     present <- scan$fields %in% all_present_fields
   }
   missing <- scan$fields[!present]
+  overwritten_cfg_fields <- intersect(all_present_fields, scan$assigned_in_scripts)
   out <- list(
     scan = scan,
-    skeleton = scan$skeleton,
+    skeleton = grouped_skeleton,
+    missing_skeleton = missing_skeleton,
     cfg_file = cfg_file,
+    cfg_file_existed = cfg_file_existed,
     present = scan$fields[present],
     missing = missing,
+    missing_before_update = missing_before_update,
     missing_required = intersect(missing, scan$required),
     missing_defaulted = intersect(missing, scan$defaulted),
     added_to_file = added_to_file,
-    unused_cfg_fields = setdiff(all_present_fields, scan$fields)
+    rewritten_file = rewritten_file,
+    imported_values = imported_values,
+    overwritten_cfg_fields = overwritten_cfg_fields,
+    unused_cfg_fields = setdiff(all_present_fields, c(scan$fields, overwritten_cfg_fields))
   )
   class(out) <- "bp_cfg_check"
   out
+}
+
+bp_cfg_assignment_locations <- function(scan, field) {
+  refs <- scan$assigned_refs
+  if (is.null(refs) || nrow(refs) == 0L) return(character(0))
+  refs <- refs[refs$field == field, , drop = FALSE]
+  if (nrow(refs) == 0L) return(character(0))
+  unique(sprintf("%s:%d", basename(refs$file), as.integer(refs$line)))
 }
 
 #' @export
@@ -1025,14 +1269,29 @@ print.bp_cfg_requirements <- function(x, ...) {
 
 #' @export
 print.bp_cfg_check <- function(x, ...) {
-  cat(x$skeleton, "\n", sep = "")
+  if (isTRUE(x$rewritten_file)) {
+    cat(x$skeleton, "\n", sep = "")
+  } else {
+    cat(x$missing_skeleton, "\n", sep = "")
+  }
+  if (length(x$overwritten_cfg_fields) > 0L) {
+    cat("# cfg fields present in cfg_file but overwritten inside scanned scheme scripts:\n")
+    for (field in x$overwritten_cfg_fields) {
+      locs <- bp_cfg_assignment_locations(x$scan, field)
+      suffix <- if (length(locs) > 0L) sprintf("  # overwritten in %s", paste(locs, collapse = ", ")) else ""
+      cat(sprintf("# - %s%s\n", field, suffix))
+    }
+  }
   if (length(x$unused_cfg_fields) > 0L) {
     cat("# Unused cfg fields present but not referenced by scanned scheme scripts:\n")
     for (field in x$unused_cfg_fields) {
       cat(sprintf("# - %s\n", field))
     }
   }
-  if (length(x$added_to_file) > 0L && !is.null(x$cfg_file)) {
+  if (isTRUE(x$rewritten_file) && !is.null(x$cfg_file)) {
+    cat(sprintf("# Rewrote grouped cfg template in %s\n", x$cfg_file))
+  }
+  if (length(x$added_to_file) > 0L && !is.null(x$cfg_file) && isTRUE(x$cfg_file_existed)) {
     cat(sprintf("# Added %d missing cfg field(s) to %s\n", length(x$added_to_file), x$cfg_file))
   }
   invisible(x)

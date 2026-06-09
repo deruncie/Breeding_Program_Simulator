@@ -217,7 +217,8 @@ test_that("bp_check_cfg_requirements appends missing cfg entries and reports unu
       "x <- cfg$nParents",
       "y <- cfg$PYT$locs %||% 3",
       "z <- cfg$PYT$traits",
-      "u <- cfg$stage_cost"
+      "u <- cfg$stage_cost",
+      "cfg$overwritten_old <- FALSE"
     ),
     scheme
   )
@@ -228,6 +229,7 @@ test_that("bp_check_cfg_requirements appends missing cfg entries and reports unu
       "  PYT = list(",
       "    locs = 4",
       "  ),",
+      "  overwritten_old = TRUE,",
       "  unused_old = TRUE",
       ")"
     ),
@@ -245,11 +247,15 @@ test_that("bp_check_cfg_requirements appends missing cfg entries and reports unu
   expect_false("nParents" %in% chk$added_to_file)
   expect_false("PYT.locs" %in% chk$added_to_file)
   expect_true("unused_old" %in% chk$unused_cfg_fields)
+  expect_false("overwritten_old" %in% chk$unused_cfg_fields)
+  expect_true("overwritten_old" %in% chk$overwritten_cfg_fields)
   expect_match(txt, "cfg <- utils::modifyList\\(cfg, list\\(", fixed = FALSE)
   expect_match(txt, "PYT = list\\(", fixed = FALSE)
   expect_match(txt, "traits = XX", fixed = TRUE)
   expect_match(txt, "stage_cost = XX", fixed = TRUE)
   expect_equal(length(gregexpr("traits = XX", txt, fixed = TRUE)[[1]]), 1L)
+  expect_true("PYT.traits" %in% chk$missing_before_update)
+  expect_false("nParents" %in% chk$missing_before_update)
 
   chk2 <- BreedingProgramSimulator:::bp_check_cfg_requirements(
     files = scheme,
@@ -260,7 +266,111 @@ test_that("bp_check_cfg_requirements appends missing cfg entries and reports unu
   expect_equal(txt2, txt)
 
   printed <- paste(utils::capture.output(print(chk)), collapse = "\n")
+  expect_match(printed, "# Missing cfg entries", fixed = TRUE)
+  expect_match(printed, "PYT = list(", fixed = TRUE)
+  expect_match(printed, "traits = XX", fixed = TRUE)
+  expect_match(printed, "stage_cost = XX", fixed = TRUE)
+  expect_false(grepl("nParents = XX", printed, fixed = TRUE))
+  expect_false(grepl("locs = 3", printed, fixed = TRUE))
+  expect_match(printed, "# cfg fields present in cfg_file but overwritten inside scanned scheme scripts:", fixed = TRUE)
+  expect_match(printed, "# - overwritten_old  # overwritten in scheme_cfg_update.R:5", fixed = TRUE)
   expect_match(printed, "# - unused_old", fixed = TRUE)
+})
+
+test_that("bp_check_cfg_requirements creates missing cfg files in printed grouped format", {
+  d <- tempdir()
+  f1 <- file.path(d, "new_scheme_a.R")
+  f2 <- file.path(d, "new_scheme_b.R")
+  cfg_file <- file.path(d, "new_cfg_file.R")
+  if (file.exists(cfg_file)) unlink(cfg_file)
+  writeLines(c("x <- cfg$shared", "a <- cfg$only_a"), f1)
+  writeLines(c("x <- cfg$shared", "b <- cfg$only_b"), f2)
+
+  chk <- BreedingProgramSimulator:::bp_check_cfg_requirements(
+    files = c(f1, f2),
+    cfg_file = cfg_file
+  )
+  txt <- paste(readLines(cfg_file, warn = FALSE), collapse = "\n")
+  printed <- paste(utils::capture.output(print(chk)), collapse = "\n")
+
+  expect_false(chk$cfg_file_existed)
+  expect_equal(txt, chk$skeleton)
+  expect_equal(printed, chk$skeleton)
+  expect_match(txt, "# Shared across: new_scheme_a.R, new_scheme_b.R", fixed = TRUE)
+  expect_match(txt, "# new_scheme_a.R only", fixed = TRUE)
+  expect_match(txt, "# new_scheme_b.R only", fixed = TRUE)
+})
+
+test_that("bp_check_cfg_requirements can rewrite grouped cfg files with imported values", {
+  d <- tempdir()
+  f1 <- file.path(d, "rewrite_scheme_a.R")
+  f2 <- file.path(d, "rewrite_scheme_b.R")
+  cfg_file <- file.path(d, "rewrite_cfg.R")
+  writeLines(c("x <- cfg$shared", "a <- cfg$only_a", "n <- cfg$PYT$locs"), f1)
+  writeLines(c("x <- cfg$shared", "b <- cfg$only_b", "n <- cfg$PYT$locs"), f2)
+  writeLines(
+    c(
+      "cfg <- list(",
+      "  only_a = 20,",
+      "  unused_old = 99,",
+      "  PYT = list(locs = 4),",
+      "  shared = 10",
+      ")"
+    ),
+    cfg_file
+  )
+
+  chk <- BreedingProgramSimulator:::bp_check_cfg_requirements(
+    files = c(f1, f2),
+    cfg_file = cfg_file,
+    rewrite_file = TRUE
+  )
+  txt <- paste(readLines(cfg_file, warn = FALSE), collapse = "\n")
+  printed <- paste(utils::capture.output(print(chk)), collapse = "\n")
+
+  expect_true(chk$rewritten_file)
+  expect_equal(txt, chk$skeleton)
+  expect_match(txt, "# Shared across: rewrite_scheme_a.R, rewrite_scheme_b.R", fixed = TRUE)
+  expect_match(txt, "shared = 10", fixed = TRUE)
+  expect_match(txt, "locs = 4", fixed = TRUE)
+  expect_match(txt, "only_a = 20", fixed = TRUE)
+  expect_match(txt, "only_b = XX", fixed = TRUE)
+  expect_false(grepl("unused_old", txt, fixed = TRUE))
+  expect_match(printed, "# Rewrote grouped cfg template", fixed = TRUE)
+})
+
+test_that("bp_check_cfg_requirements can create a new grouped cfg from an old cfg file", {
+  d <- tempdir()
+  f1 <- file.path(d, "import_scheme_a.R")
+  f2 <- file.path(d, "import_scheme_b.R")
+  old_cfg <- file.path(d, "old_cfg.R")
+  new_cfg <- file.path(d, "new_imported_cfg.R")
+  if (file.exists(new_cfg)) unlink(new_cfg)
+  writeLines(c("x <- cfg$shared", "a <- cfg$only_a"), f1)
+  writeLines(c("x <- cfg$shared", "b <- cfg$only_b"), f2)
+  writeLines(
+    c(
+      "cfg <- list(",
+      "  shared = 10,",
+      "  only_a = 20",
+      ")",
+      "cfg$only_a <- 21"
+    ),
+    old_cfg
+  )
+
+  chk <- BreedingProgramSimulator:::bp_check_cfg_requirements(
+    files = c(f1, f2),
+    cfg_file = new_cfg,
+    import_cfg_file = old_cfg
+  )
+  txt <- paste(readLines(new_cfg, warn = FALSE), collapse = "\n")
+
+  expect_false(chk$cfg_file_existed)
+  expect_equal(txt, chk$skeleton)
+  expect_match(txt, "shared = 10", fixed = TRUE)
+  expect_match(txt, "only_a = 21", fixed = TRUE)
+  expect_match(txt, "only_b = XX", fixed = TRUE)
 })
 
 test_that("bp_scan_cfg_requirements extracts inline defaults without trailing calls", {
@@ -284,6 +394,46 @@ test_that("bp_scan_cfg_requirements extracts inline defaults without trailing ca
   expect_match(scan$skeleton, "dropF1_pop = FALSE", fixed = TRUE)
   expect_false(grepl("simParam", scan$skeleton, fixed = TRUE))
   expect_false(grepl("FALSE) {", scan$skeleton, fixed = TRUE))
+})
+
+test_that("bp_scan_cfg_requirements excludes cfg fields assigned inside scripts unless self-referenced", {
+  f <- tempfile(fileext = ".R")
+  writeLines(
+    c(
+      "cfg$ticks_per_year <- as.integer(bp_ticks_per_year(state))",
+      "cfg$nCyclesPI <- as.integer(round(1 / as.numeric(cfg$speed_breeding_cycle_years)))",
+      "cfg$first_year_train <- state$time$t + cfg$first_year_train",
+      "x <- cfg$nCyclesPI + cfg$ticks_per_year + cfg$speed_breeding_cycle_years + cfg$first_year_train"
+    ),
+    f
+  )
+
+  scan <- BreedingProgramSimulator:::bp_scan_cfg_requirements(f)
+  expect_false("ticks_per_year" %in% scan$fields)
+  expect_false("nCyclesPI" %in% scan$fields)
+  expect_true("speed_breeding_cycle_years" %in% scan$fields)
+  expect_true("first_year_train" %in% scan$fields)
+  expect_true(all(c("ticks_per_year", "nCyclesPI") %in% scan$assigned_in_scripts))
+})
+
+test_that("bp_scan_cfg_requirements ignores cfg references in comments", {
+  f <- tempfile(fileext = ".R")
+  writeLines(
+    c(
+      "# cfg$comment_only should not be required",
+      "x <- cfg$real_field # cfg$trailing_comment should not be required",
+      "label <- '# cfg$inside_string is not a cfg reference comment'",
+      "y <- cfg$after_string"
+    ),
+    f
+  )
+
+  scan <- BreedingProgramSimulator:::bp_scan_cfg_requirements(f)
+  expect_true("real_field" %in% scan$fields)
+  expect_true("after_string" %in% scan$fields)
+  expect_false("comment_only" %in% scan$fields)
+  expect_false("trailing_comment" %in% scan$fields)
+  expect_false("inside_string" %in% scan$fields)
 })
 
 test_that("bp_report_stage_metric reports and scales simple AlphaSimR metrics", {
@@ -319,8 +469,58 @@ test_that("bp_report_stage_metric reports and scales simple AlphaSimR metrics", 
     BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV"),
     1
   )
+  expect_equal(
+    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "wf_accEBV"),
+    1
+  )
+
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  pop_no_ebv <- state$pops[[cid]]
+  pop_no_ebv@ebv[,] <- NA_real_
+  pop_no_ebv@pheno <- pop_no_ebv@gv
+  state$pops[[cid]] <- pop_no_ebv
+  expect_equal(
+    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV"),
+    1
+  )
+  expect_equal(
+    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "wf_accEBV"),
+    1
+  )
+
+  pop_no_pred <- state$pops[[cid]]
+  pop_no_pred@ebv <- matrix(numeric(0), nrow = pop_no_pred@nInd, ncol = 0L)
+  pop_no_pred@pheno <- matrix(numeric(0), nrow = pop_no_pred@nInd, ncol = 0L)
+  state$pops[[cid]] <- pop_no_pred
+  expect_true(is.na(BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV")))
+  expect_true(is.na(BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "wf_accEBV")))
+
   expect_error(
     BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accGV"),
     "'arg' should be one of"
   )
+})
+
+test_that("bp_report_stage_metric treats zero-column EBV matrices as unavailable", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  founder <- quickHaplo(nInd = 12, nChr = 1, segSites = 30)
+  SP <- SimParam$new(founder)
+  SP$addTraitA(10)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  pop <- newPop(founder, simParam = SP)
+  pop@ebv <- matrix(numeric(0), nrow = pop@nInd, ncol = 0L)
+  pop@pheno <- pop@gv
+  state <- BreedingProgramSimulator:::put_stage_pop(state, pop, stage = "PYT", ready_in_years = 0)
+
+  expect_equal(
+    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV", traits = 1L),
+    1
+  )
+
+  cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
+  state$pops[[cid]]@pheno <- matrix(numeric(0), nrow = pop@nInd, ncol = 0L)
+  expect_true(is.na(BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV", traits = 1L)))
 })
