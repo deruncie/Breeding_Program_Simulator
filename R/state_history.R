@@ -698,12 +698,18 @@ bp_cfg_paths_in_text <- function(line) {
   unique(gsub("$", ".", out, fixed = TRUE))
 }
 
+bp_cfg_is_assignment_call <- function(expr) {
+  is.call(expr) &&
+    is.symbol(expr[[1L]]) &&
+    as.character(expr[[1L]]) %in% c("<-", "=")
+}
+
 bp_cfg_assignment_in_line <- function(line) {
   line <- bp_strip_r_comment(line)
   exprs <- tryCatch(parse(text = line, keep.source = FALSE), error = function(e) expression())
   if (length(exprs) == 0L) return(NULL)
   for (expr in as.list(exprs)) {
-    if (!is.call(expr) || !(as.character(expr[[1L]]) %in% c("<-", "="))) next
+    if (!bp_cfg_is_assignment_call(expr)) next
     lhs <- bp_cfg_lhs_path(expr[[2L]])
     if (is.na(lhs) || !nzchar(lhs)) next
     rhs_fields <- bp_cfg_paths_in_text(paste(deparse(expr[[3L]], width.cutoff = 500L), collapse = " "))
@@ -800,6 +806,7 @@ bp_cfg_default_for_field <- function(line, field) {
 
 bp_cfg_leaf_info <- function(refs, field, values = NULL) {
   rows <- refs[refs$field == field, , drop = FALSE]
+  script_assigned <- "assigned_in_script" %in% names(rows) && any(rows$assigned_in_script)
   def <- NA_character_
   def_row <- NA_integer_
   if (nrow(rows) > 0L) {
@@ -813,9 +820,19 @@ bp_cfg_leaf_info <- function(refs, field, values = NULL) {
     }
   }
   imported <- !is.null(values) && field %in% names(values) && nzchar(values[[field]])
-  value <- if (isTRUE(imported)) values[[field]] else if (is.na(def)) "XX" else def
+  value <- if (isTRUE(imported)) {
+    values[[field]]
+  } else if (isTRUE(script_assigned)) {
+    "NULL"
+  } else if (is.na(def)) {
+    "XX"
+  } else {
+    def
+  }
   comment <- ""
-  if (!isTRUE(imported) && !is.na(def) && nrow(rows) > 0L && !is.na(def_row)) {
+  if (!isTRUE(imported) && isTRUE(script_assigned)) {
+    comment <- "  # set inside scanned script"
+  } else if (!isTRUE(imported) && !is.na(def) && nrow(rows) > 0L && !is.na(def_row)) {
     src <- sprintf("%s:%d", basename(rows$file[[def_row]]), as.integer(rows$line[[def_row]]))
     comment <- sprintf("  # default used in %s", src)
   }
@@ -1042,7 +1059,7 @@ bp_cfg_fields_from_cfg_file <- function(cfg_file) {
   exprs <- tryCatch(parse(cfg_file), error = function(e) expression())
   out <- character(0)
   for (expr in as.list(exprs)) {
-    if (!is.call(expr) || !(as.character(expr[[1L]]) %in% c("<-", "="))) next
+    if (!bp_cfg_is_assignment_call(expr)) next
     lhs <- bp_cfg_lhs_path(expr[[2L]])
     if (is.na(lhs)) next
     rhs <- expr[[3L]]
@@ -1060,7 +1077,7 @@ bp_cfg_values_from_cfg_file <- function(cfg_file) {
   exprs <- tryCatch(parse(cfg_file), error = function(e) expression())
   out <- character(0)
   for (expr in as.list(exprs)) {
-    if (!is.call(expr) || !(as.character(expr[[1L]]) %in% c("<-", "="))) next
+    if (!bp_cfg_is_assignment_call(expr)) next
     lhs <- bp_cfg_lhs_path(expr[[2L]])
     if (is.na(lhs)) next
     rhs <- expr[[3L]]
@@ -1077,8 +1094,7 @@ bp_cfg_file_has_cfg <- function(cfg_file) {
   if (is.null(cfg_file) || !file.exists(cfg_file)) return(FALSE)
   exprs <- tryCatch(parse(cfg_file), error = function(e) expression())
   any(vapply(as.list(exprs), function(expr) {
-    is.call(expr) &&
-      as.character(expr[[1L]]) %in% c("<-", "=") &&
+    bp_cfg_is_assignment_call(expr) &&
       !is.na(bp_cfg_lhs_path(expr[[2L]])) &&
       !nzchar(bp_cfg_lhs_path(expr[[2L]]))
   }, logical(1)))
@@ -1159,8 +1175,8 @@ bp_cfg_import_values <- function(cfg = list(), cfg_file = NULL, import_cfg_file 
 #' files are supplied, fields used by more than one scheme are grouped first
 #' with a comment listing the schemes they apply to, followed by per-scheme
 #' sections for fields used by only one script. Fields assigned inside a script
-#' are treated as script-derived and excluded unless the assignment also reads
-#' the same cfg field.
+#' are included with value `NULL` and treated as optional/script-set fields.
+#' An assignment that also reads the same cfg field remains a required input.
 #'
 #' @param files One or more R script paths.
 #'
@@ -1210,11 +1226,9 @@ bp_scan_cfg_requirements <- function(files) {
     do.call(rbind, assigned_rows)
   }
   script_assigned <- sort(unique(script_assigned))
-  if (nrow(refs) > 0L && length(script_assigned) > 0L) {
-    refs <- refs[!(refs$field %in% script_assigned), , drop = FALSE]
-  }
+  refs$assigned_in_script <- refs$field %in% script_assigned
   fields <- sort(unique(refs$field))
-  required <- sort(unique(refs$field[!refs$has_inline_default]))
+  required <- sort(unique(refs$field[!refs$has_inline_default & !refs$assigned_in_script]))
   defaulted <- sort(setdiff(fields, required))
   skeleton <- bp_cfg_build_skeleton(refs, fields)
   out <- list(refs = refs, fields = fields, files = files, assigned_in_scripts = script_assigned, assigned_refs = assigned_refs, required = required, defaulted = defaulted, skeleton = skeleton)
@@ -1300,6 +1314,12 @@ bp_check_cfg_requirements <- function(
   }
   missing <- scan$fields[!present]
   overwritten_cfg_fields <- intersect(all_present_fields, scan$assigned_in_scripts)
+  if (length(overwritten_cfg_fields) > 0L) {
+    assigned_values <- imported_values[overwritten_cfg_fields]
+    overwritten_cfg_fields <- overwritten_cfg_fields[
+      !is.na(assigned_values) & trimws(unname(assigned_values)) != "NULL"
+    ]
+  }
   out <- list(
     scan = scan,
     skeleton = grouped_skeleton,

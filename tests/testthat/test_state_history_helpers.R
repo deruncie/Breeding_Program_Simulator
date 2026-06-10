@@ -448,7 +448,7 @@ test_that("bp_scan_cfg_requirements extracts inline defaults without trailing ca
   expect_false(grepl("FALSE) {", scan$skeleton, fixed = TRUE))
 })
 
-test_that("bp_scan_cfg_requirements excludes cfg fields assigned inside scripts unless self-referenced", {
+test_that("bp_scan_cfg_requirements includes script-assigned cfg fields as optional NULL values", {
   f <- tempfile(fileext = ".R")
   writeLines(
     c(
@@ -461,11 +461,40 @@ test_that("bp_scan_cfg_requirements excludes cfg fields assigned inside scripts 
   )
 
   scan <- BreedingProgramSimulator:::bp_scan_cfg_requirements(f)
-  expect_false("ticks_per_year" %in% scan$fields)
-  expect_false("nCyclesPI" %in% scan$fields)
+  expect_true("ticks_per_year" %in% scan$fields)
+  expect_true("nCyclesPI" %in% scan$fields)
   expect_true("speed_breeding_cycle_years" %in% scan$fields)
   expect_true("first_year_train" %in% scan$fields)
   expect_true(all(c("ticks_per_year", "nCyclesPI") %in% scan$assigned_in_scripts))
+  expect_false(any(c("ticks_per_year", "nCyclesPI") %in% scan$required))
+  expect_true("first_year_train" %in% scan$required)
+  expect_match(scan$skeleton, "ticks_per_year = NULL", fixed = TRUE)
+  expect_match(scan$skeleton, "nCyclesPI = NULL", fixed = TRUE)
+  expect_match(scan$skeleton, "first_year_train = XX", fixed = TRUE)
+})
+
+test_that("bp_check_cfg_requirements writes missing script-assigned fields as NULL", {
+  scheme <- tempfile(fileext = ".R")
+  cfg_file <- tempfile(fileext = ".R")
+  writeLines(
+    c(
+      "cfg$derived_value <- state$time$t",
+      "x <- cfg$required_value"
+    ),
+    scheme
+  )
+  writeLines("cfg <- list(required_value = 10)", cfg_file)
+
+  chk <- BreedingProgramSimulator:::bp_check_cfg_requirements(
+    files = scheme,
+    cfg_file = cfg_file
+  )
+  txt <- paste(readLines(cfg_file, warn = FALSE), collapse = "\n")
+
+  expect_true("derived_value" %in% chk$added_to_file)
+  expect_false("derived_value" %in% chk$missing_required)
+  expect_false("derived_value" %in% chk$overwritten_cfg_fields)
+  expect_match(txt, "derived_value = NULL", fixed = TRUE)
 })
 
 test_that("bp_scan_cfg_requirements ignores cfg references in comments", {
@@ -486,6 +515,18 @@ test_that("bp_scan_cfg_requirements ignores cfg references in comments", {
   expect_false("comment_only" %in% scan$fields)
   expect_false("trailing_comment" %in% scan$fields)
   expect_false("inside_string" %in% scan$fields)
+})
+
+test_that("bp_scan_cfg_requirements handles method calls with cfg arguments", {
+  f <- tempfile(fileext = ".R")
+  writeLines("SP$restrSegSites(cfg$nQtlPerChrom, cfg$nSnpPerChrom)", f)
+
+  scan <- BreedingProgramSimulator:::bp_scan_cfg_requirements(f)
+
+  expect_setequal(scan$fields, c("nQtlPerChrom", "nSnpPerChrom"))
+  expect_equal(scan$assigned_in_scripts, character(0))
+  expect_match(scan$skeleton, "nQtlPerChrom = XX", fixed = TRUE)
+  expect_match(scan$skeleton, "nSnpPerChrom = XX", fixed = TRUE)
 })
 
 test_that("bp_report_stage_metric reports and scales simple AlphaSimR metrics", {
