@@ -220,6 +220,40 @@ test_that("predict_ebv_pop accepts multi-trait matrix output", {
   expect_equal(s@nInd, 3L)
 })
 
+test_that("bp_index utilities compute and select by weighted trait index", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  h <- quickHaplo(30, 2, 50)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+  SP$addTraitA(10)
+  pop <- newPop(h, simParam = SP)
+  values <- as.matrix(pop@gv)
+  colnames(values) <- c("Trait1", "Trait2")
+  w <- c(1, -0.25)
+
+  idx <- BreedingProgramSimulator:::bp_index_values(values, weights = w, traits = c("Trait1", "Trait2"))
+  expect_equal(idx, drop(values %*% matrix(w, ncol = 1L)))
+
+  pop2 <- BreedingProgramSimulator:::bp_set_indexed_ebv(pop, values = values, weights = w, traits = c("Trait1", "Trait2"))
+  expect_equal(ncol(pop2@ebv), 3L)
+  expect_equal(colnames(pop2@ebv)[[3L]], "Index")
+  expect_equal(as.numeric(pop2@ebv[, "Index"]), idx)
+
+  sel <- BreedingProgramSimulator:::bp_select_by_index(
+    pop,
+    n_select = 5,
+    weights = w,
+    use = "gv",
+    traits = 1:2,
+    simParam = SP
+  )
+  manual_ids <- pop@id[order(idx, decreasing = TRUE)[seq_len(5)]]
+  expect_setequal(as.character(sel@id), as.character(manual_ids))
+  expect_equal(dim(pop@ebv), c(pop@nInd, 0L))
+})
+
 test_that("predict_ebv_pop requires logged genotyping by default", {
   testthat::skip_if_not_installed("AlphaSimR")
   library(AlphaSimR)

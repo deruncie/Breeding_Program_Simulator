@@ -8,6 +8,7 @@ bp_set_trait_baseline(
   state,
   pop = NULL,
   values = NULL,
+  covariance = NULL,
   traits = NULL,
   names = NULL,
   label = "default",
@@ -21,7 +22,10 @@ bp_set_trait_baseline(
 \item{pop}{Optional population used to derive baseline from `@gv`.}
 
 \item{values}{Optional list/vector of baseline values. Lists may contain
-`mean` and `sd`.}
+`mean`, `sd`, and optionally `cov`.}
+
+\item{covariance}{Optional trait covariance matrix used for index scaling
+when `values` are supplied.}
 
 \item{traits}{Optional trait indices or names.}
 

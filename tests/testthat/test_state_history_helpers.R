@@ -140,6 +140,58 @@ test_that("bp_set_trait_baseline stores supplied values", {
   expect_equal(baseline$index_mean, 8)
 })
 
+test_that("bp_make_varE constructs residual covariance", {
+  h2 <- c(T1 = 0.5, T2 = 0.25)
+  varG <- c(T1 = 2, T2 = 4)
+  corE <- matrix(c(1, 0.3, 0.3, 1), nrow = 2)
+  out <- BreedingProgramSimulator:::bp_make_varE(h2, varG, corE, trait_names = names(h2))
+  varE_diag <- ((1 - h2) / pmax(h2, 1e-8)) * varG
+  D <- diag(sqrt(varE_diag), nrow = 2)
+
+  expect_equal(unname(out), unname(D %*% corE %*% D))
+  expect_equal(rownames(out), names(h2))
+  expect_equal(colnames(out), names(h2))
+})
+
+test_that("bp_set_trait_baseline computes correlated index baselines from values", {
+  state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
+  cov_mat <- matrix(c(4, 1.5, 1.5, 9), nrow = 2, dimnames = list(c("Yield", "Height"), c("Yield", "Height")))
+  w <- c(1, -0.5)
+  state <- BreedingProgramSimulator:::bp_set_trait_baseline(
+    state,
+    values = list(mean = c(Yield = 10, Height = 2), sd = c(Yield = 2, Height = 3), cov = cov_mat),
+    include_index = TRUE,
+    index_weights = w
+  )
+
+  baseline <- state$sim$trait_baselines$default
+  expect_equal(unname(baseline$index_mean), sum(c(10, 2) * w))
+  expect_equal(unname(baseline$index_sd), sqrt(drop(t(w) %*% cov_mat %*% w)))
+  expect_equal(unname(baseline$mean["Index"]), baseline$index_mean)
+  expect_equal(unname(baseline$sd["Index"]), baseline$index_sd)
+})
+
+test_that("bp_set_trait_baseline computes pop-derived index sd from direct index", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  h <- quickHaplo(20, 2, 40)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+  SP$addTraitA(10)
+  pop <- newPop(h, simParam = SP)
+  w <- c(1.2, -0.4)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  state <- BreedingProgramSimulator:::bp_set_trait_baseline(state, pop = pop, include_index = TRUE, index_weights = w)
+  baseline <- state$sim$trait_baselines$default
+  idx <- drop(as.matrix(pop@gv) %*% matrix(w, ncol = 1L))
+
+  expect_equal(unname(baseline$index_mean), mean(idx), tolerance = 1e-10)
+  expect_equal(unname(baseline$index_sd), stats::sd(idx), tolerance = 1e-10)
+  expect_equal(unname(baseline$sd["Index"]), stats::sd(idx), tolerance = 1e-10)
+})
+
 test_that("bp_scan_cfg_requirements and bp_check_cfg_requirements report missing fields", {
   f <- tempfile(fileext = ".R")
   writeLines(
@@ -523,4 +575,61 @@ test_that("bp_report_stage_metric treats zero-column EBV matrices as unavailable
   cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
   state$pops[[cid]]@pheno <- matrix(numeric(0), nrow = pop@nInd, ncol = 0L)
   expect_true(is.na(BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV", traits = 1L)))
+})
+
+test_that("bp_report_stage_metric scales multi-trait index reports", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  h <- quickHaplo(24, 2, 50)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10)
+  SP$addTraitA(10)
+  pop <- newPop(h, simParam = SP)
+  pop@ebv <- pop@gv
+  w <- c(1, -0.5)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  state <- BreedingProgramSimulator:::bp_set_trait_baseline(state, pop = pop, include_index = TRUE, index_weights = w)
+  state <- BreedingProgramSimulator:::put_stage_pop(state, pop, stage = "PYT", ready_in_years = 0)
+
+  mean_out <- BreedingProgramSimulator:::bp_report_stage_metric(
+    state, "PYT", metric = "meanG", traits = 1:2, include_index = TRUE, index_weights = w
+  )
+  var_out <- BreedingProgramSimulator:::bp_report_stage_metric(
+    state, "PYT", metric = "varG", traits = 1:2, include_index = TRUE, index_weights = w
+  )
+  acc_out <- BreedingProgramSimulator:::bp_report_stage_metric(
+    state, "PYT", metric = "accEBV", traits = 1:2, include_index = TRUE, index_weights = w
+  )
+
+  expect_true("Index" %in% names(mean_out))
+  expect_false(is.na(mean_out[["Index"]]))
+  expect_equal(unname(mean_out), rep(0, 3), tolerance = 1e-10)
+  expect_equal(unname(var_out), rep(1, 3), tolerance = 1e-10)
+  expect_equal(unname(acc_out), rep(1, 3), tolerance = 1e-10)
+})
+
+test_that("bp_report_stage_columns returns stable NA columns when no cohort is available", {
+  state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
+  state <- BreedingProgramSimulator:::bp_set_trait_baseline(
+    state,
+    values = list(mean = c(Trait1 = 0, Trait2 = 0), sd = c(Trait1 = 1, Trait2 = 1)),
+    covariance = diag(2),
+    include_index = TRUE,
+    index_weights = c(1, 1)
+  )
+
+  out <- BreedingProgramSimulator:::bp_report_stage_columns(
+    state,
+    stage = "PYT",
+    metric = "meanG",
+    traits = c("Trait1", "Trait2"),
+    include_index = TRUE,
+    index_weights = c(1, 1),
+    prefix = "meanPYT"
+  )
+
+  expect_equal(names(out), c("meanPYT_Trait1", "meanPYT_Trait2", "meanPYT_Index"))
+  expect_true(all(vapply(out, is.na, logical(1))))
 })

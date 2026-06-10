@@ -483,6 +483,47 @@ bp_update_stage_pop <- function(
   state
 }
 
+#' Construct a Residual Covariance Matrix
+#'
+#' Build a residual covariance matrix from trait heritabilities, genetic
+#' variances, and a residual correlation matrix.
+#'
+#' @param h2 Numeric vector of trait heritabilities.
+#' @param varG Numeric vector of genetic variances on the reporting scale.
+#' @param corE Residual correlation matrix.
+#' @param trait_names Optional trait names for rows and columns.
+#'
+#' @return Numeric residual covariance matrix.
+#' @export
+bp_make_varE <- function(h2, varG, corE, trait_names = NULL) {
+  h2 <- as.numeric(h2)
+  varG <- as.numeric(varG)
+  if (length(h2) == 0L || length(h2) != length(varG)) {
+    stop("h2 and varG must be numeric vectors of the same non-zero length.", call. = FALSE)
+  }
+  corE <- as.matrix(corE)
+  if (!all(dim(corE) == length(h2))) {
+    stop("corE dimensions must match length(h2).", call. = FALSE)
+  }
+  if (any(!is.finite(h2)) || any(h2 < 0) || any(h2 > 1)) {
+    stop("h2 values must be finite and between 0 and 1.", call. = FALSE)
+  }
+  if (any(!is.finite(varG)) || any(varG < 0)) {
+    stop("varG values must be finite and non-negative.", call. = FALSE)
+  }
+  if (any(!is.finite(corE))) {
+    stop("corE must contain only finite values.", call. = FALSE)
+  }
+  varE_diag <- ((1 - h2) / pmax(h2, 1e-8)) * varG
+  D <- diag(sqrt(varE_diag), nrow = length(varE_diag))
+  out <- D %*% corE %*% D
+  if (!is.null(trait_names)) {
+    if (length(trait_names) != length(h2)) stop("trait_names length must match length(h2).", call. = FALSE)
+    rownames(out) <- colnames(out) <- as.character(trait_names)
+  }
+  out
+}
+
 #' Set Trait Reporting Baseline
 #'
 #' Store trait-level reporting normalization in `state$sim$trait_baselines`.
@@ -490,7 +531,9 @@ bp_update_stage_pop <- function(
 #' @param state Program state.
 #' @param pop Optional population used to derive baseline from `@gv`.
 #' @param values Optional list/vector of baseline values. Lists may contain
-#'   `mean` and `sd`.
+#'   `mean`, `sd`, and optionally `cov`.
+#' @param covariance Optional trait covariance matrix used for index scaling
+#'   when `values` are supplied.
 #' @param traits Optional trait indices or names.
 #' @param names Optional trait names.
 #' @param label Baseline label.
@@ -503,6 +546,7 @@ bp_set_trait_baseline <- function(
   state,
   pop = NULL,
   values = NULL,
+  covariance = NULL,
   traits = NULL,
   names = NULL,
   label = "default",
@@ -511,6 +555,7 @@ bp_set_trait_baseline <- function(
 ) {
   label <- as.character(label %||% "default")
   if (!nzchar(label)) stop("label must be non-empty.", call. = FALSE)
+  baseline_gv <- NULL
 
   if (!is.null(pop)) {
     if (!methods::is(pop, "Pop") && !methods::is(pop, "RawPop")) {
@@ -524,13 +569,17 @@ bp_set_trait_baseline <- function(
       gv <- gv[, match(as.character(traits), colnames(gv)), drop = FALSE]
     }
     trait_names <- names %||% colnames(gv) %||% paste0("trait", seq_len(ncol(gv)))
+    baseline_gv <- gv
     means <- colMeans(gv, na.rm = TRUE)
     sds <- apply(gv, 2L, stats::sd, na.rm = TRUE)
     names(means) <- names(sds) <- trait_names
+    covariance <- stats::cov(gv, use = "pairwise.complete.obs")
+    colnames(covariance) <- rownames(covariance) <- trait_names
   } else {
     if (is.null(values)) stop("Provide either pop or values.", call. = FALSE)
     means <- if (is.list(values)) values$mean %||% values$means else values
     sds <- if (is.list(values)) values$sd %||% values$sds else rep(1, length(means))
+    covariance <- covariance %||% if (is.list(values)) values$cov %||% values$covariance else NULL
     input_names <- names %||% names(means) %||% names(sds)
     means <- as.numeric(means)
     sds <- as.numeric(sds)
@@ -538,6 +587,15 @@ bp_set_trait_baseline <- function(
     if (length(means) != length(sds)) stop("Baseline mean and sd lengths must match.", call. = FALSE)
     trait_names <- input_names %||% paste0("trait", seq_along(means))
     names(means) <- names(sds) <- trait_names
+    if (!is.null(covariance)) {
+      covariance <- as.matrix(covariance)
+      if (!all(dim(covariance) == length(means))) {
+        stop("covariance dimensions must match baseline traits.", call. = FALSE)
+      }
+      if (is.null(rownames(covariance))) rownames(covariance) <- trait_names
+      if (is.null(colnames(covariance))) colnames(covariance) <- trait_names
+      covariance <- covariance[trait_names, trait_names, drop = FALSE]
+    }
   }
 
   bad_sd <- !is.finite(sds) | sds <= 0
@@ -552,12 +610,22 @@ bp_set_trait_baseline <- function(
     sd = sds,
     source = if (!is.null(pop)) "pop@gv" else "values"
   )
+  if (!is.null(covariance)) baseline$cov <- covariance
   if (isTRUE(include_index)) {
     w <- as.numeric(index_weights %||% rep(1, length(means)))
     if (length(w) != length(means)) stop("index_weights length must match number of traits.", call. = FALSE)
     baseline$index_weights <- w
     baseline$index_mean <- as.numeric(sum(means * w))
-    baseline$index_sd <- as.numeric(sqrt(sum((sds * w)^2)))
+    baseline$index_sd <- if (!is.null(pop)) {
+      idx <- drop(baseline_gv %*% matrix(w, ncol = 1L))
+      as.numeric(stats::sd(idx, na.rm = TRUE))
+    } else if (!is.null(covariance)) {
+      as.numeric(sqrt(drop(t(w) %*% covariance %*% w)))
+    } else {
+      as.numeric(sqrt(sum((sds * w)^2)))
+    }
+    baseline$mean <- c(baseline$mean, Index = baseline$index_mean)
+    baseline$sd <- c(baseline$sd, Index = baseline$index_sd)
   }
   if (is.null(state$sim$trait_baselines)) state$sim$trait_baselines <- list()
   state$sim$trait_baselines[[label]] <- baseline

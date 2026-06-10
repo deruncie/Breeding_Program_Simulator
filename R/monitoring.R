@@ -332,12 +332,101 @@ bp_report_matrix <- function(pop, traits = NULL, slot = c("gv", "pheno", "ebv"))
   mat[, idx, drop = FALSE]
 }
 
+#' Compute Weighted Index Values
+#'
+#' @param values Numeric matrix-like object with individuals in rows and traits
+#'   in columns.
+#' @param weights Numeric index weights.
+#' @param traits Optional trait indices or column names to use.
+#'
+#' @return Numeric vector of weighted index values.
+#' @export
+bp_index_values <- function(values, weights, traits = NULL) {
+  mat <- as.matrix(values)
+  if (!is.null(traits)) {
+    if (is.numeric(traits)) {
+      idx <- as.integer(traits)
+      if (any(is.na(idx)) || any(idx < 1L) || any(idx > ncol(mat))) {
+        stop("traits must be valid column indices.", call. = FALSE)
+      }
+      mat <- mat[, idx, drop = FALSE]
+    } else {
+      if (is.null(colnames(mat))) stop("Character traits require column names in values.", call. = FALSE)
+      idx <- match(as.character(traits), colnames(mat))
+      if (anyNA(idx)) stop("Some requested traits were not found in values.", call. = FALSE)
+      mat <- mat[, idx, drop = FALSE]
+    }
+  }
+  w <- as.numeric(weights)
+  if (length(w) != ncol(mat)) stop("weights length must match number of selected traits.", call. = FALSE)
+  drop(mat %*% matrix(w, ncol = 1L))
+}
+
+#' Set EBVs with an Optional Weighted Index Column
+#'
+#' @param pop AlphaSimR `Pop` object.
+#' @param values EBV matrix, one row per individual.
+#' @param weights Numeric index weights.
+#' @param traits Optional trait indices or column names used to compute the
+#'   index from `values`.
+#' @param include_index_column Whether to append the weighted index column.
+#' @param index_name Name of the appended index column.
+#'
+#' @return Updated `pop`.
+#' @export
+bp_set_indexed_ebv <- function(pop, values, weights, traits = NULL, include_index_column = TRUE, index_name = "Index") {
+  if (!methods::is(pop, "Pop")) stop("bp_set_indexed_ebv requires an AlphaSimR Pop object.", call. = FALSE)
+  ebv <- as.matrix(values)
+  if (nrow(ebv) != pop@nInd) stop("values must have one row per individual in pop.", call. = FALSE)
+  if (is.null(colnames(ebv))) colnames(ebv) <- paste0("trait", seq_len(ncol(ebv)))
+  if (isTRUE(include_index_column)) {
+    idx <- bp_index_values(ebv, weights = weights, traits = traits)
+    ebv <- cbind(ebv, stats::setNames(data.frame(idx, check.names = FALSE), as.character(index_name)))
+    ebv <- as.matrix(ebv)
+  }
+  pop@ebv <- ebv
+  pop
+}
+
+#' Select Individuals by Weighted Multi-Trait Index
+#'
+#' @param pop AlphaSimR `Pop` object.
+#' @param n_select Number of individuals to select.
+#' @param weights Numeric index weights.
+#' @param use Source matrix: `ebv`, `pheno`, or `gv`.
+#' @param traits Optional trait indices or names.
+#' @param simParam Optional AlphaSimR simulation parameters.
+#'
+#' @return Selected AlphaSimR `Pop` object.
+#' @export
+bp_select_by_index <- function(pop, n_select, weights, use = c("ebv", "pheno", "gv"), traits = NULL, simParam = NULL) {
+  if (!requireNamespace("AlphaSimR", quietly = TRUE)) {
+    stop("bp_select_by_index requires the AlphaSimR package.", call. = FALSE)
+  }
+  if (!methods::is(pop, "Pop")) stop("bp_select_by_index requires an AlphaSimR Pop object.", call. = FALSE)
+  use <- match.arg(use)
+  mat <- switch(use, ebv = pop@ebv, pheno = pop@pheno, gv = pop@gv)
+  if (is.null(mat) || ncol(as.matrix(mat)) == 0L) stop(sprintf("pop@%s is empty.", use), call. = FALSE)
+  idx_values <- bp_index_values(mat, weights = weights, traits = traits)
+  scored <- pop
+  scored@ebv <- matrix(idx_values, ncol = 1L, dimnames = list(NULL, "Index"))
+  selected_scored <- AlphaSimR::selectInd(
+    scored,
+    nInd = as.integer(n_select),
+    use = "ebv",
+    trait = 1L,
+    simParam = simParam
+  )
+  idx <- match(selected_scored@id, pop@id)
+  pop_subset(pop, idx)
+}
+
 bp_apply_report_index <- function(mat, include_index = FALSE, index_weights = NULL) {
   mat <- as.matrix(mat)
   if (!isTRUE(include_index)) return(mat)
   w <- as.numeric(index_weights %||% rep(1, ncol(mat)))
   if (length(w) != ncol(mat)) stop("index_weights length must match number of reported traits.", call. = FALSE)
-  cbind(mat, Index = drop(mat %*% matrix(w, ncol = 1L)))
+  cbind(mat, Index = bp_index_values(mat, weights = w))
 }
 
 bp_named_metric <- function(values, mat, include_index = FALSE) {
@@ -489,4 +578,84 @@ bp_report_stage_metric <- function(
   vals <- lapply(seq_len(nrow(rows)), function(i) one_metric(rows[i, , drop = FALSE]))
   if (use != "all_available") return(vals[[1L]])
   vals
+}
+
+bp_report_expected_names <- function(state, traits = NULL, include_index = FALSE, baseline = NULL) {
+  if (is.null(baseline) && !is.null(state$sim$trait_baselines)) {
+    baseline <- state$sim$trait_baselines[["default"]]
+  }
+  base_names <- if (!is.null(baseline) && !is.null(baseline$mean)) {
+    setdiff(names(baseline$mean), "Index")
+  } else {
+    character(0)
+  }
+  if (is.null(traits)) {
+    out <- base_names
+  } else if (is.numeric(traits)) {
+    idx <- as.integer(traits)
+    out <- if (length(base_names) >= max(idx, na.rm = TRUE)) base_names[idx] else paste0("trait", idx)
+  } else {
+    out <- as.character(traits)
+  }
+  out <- out[!is.na(out) & nzchar(out)]
+  if (isTRUE(include_index)) out <- c(out, "Index")
+  out
+}
+
+#' Report Stage Metric as Named Columns
+#'
+#' Call [bp_report_stage_metric()] and flatten its named vector into a named
+#' list suitable for `data.frame()` or row-binding.
+#'
+#' @param state Program state.
+#' @param stage Stage name.
+#' @param stream Optional stream filter.
+#' @param metric Metric name passed to [bp_report_stage_metric()].
+#' @param traits Optional trait indices or names.
+#' @param use Cohort selection rule.
+#' @param baseline Optional baseline object.
+#' @param include_index Whether to include a weighted index.
+#' @param index_weights Optional index weights.
+#' @param prefix Output column prefix. Defaults to `paste0(metric, stage)`.
+#'
+#' @return Named list of numeric scalar columns.
+#' @export
+bp_report_stage_columns <- function(
+  state,
+  stage,
+  stream = NULL,
+  metric = "meanG",
+  traits = NULL,
+  use = "latest_available",
+  baseline = NULL,
+  include_index = FALSE,
+  index_weights = NULL,
+  prefix = NULL
+) {
+  prefix <- as.character(prefix %||% paste0(metric, stage))
+  vals <- bp_report_stage_metric(
+    state = state,
+    stage = stage,
+    stream = stream,
+    metric = metric,
+    traits = traits,
+    use = use,
+    baseline = baseline,
+    include_index = include_index,
+    index_weights = index_weights
+  )
+  if (is.list(vals)) stop("bp_report_stage_columns does not support use = 'all_available'.", call. = FALSE)
+
+  expected <- bp_report_expected_names(state, traits = traits, include_index = include_index, baseline = baseline)
+  if (length(vals) == 1L && is.na(vals) && is.null(names(vals)) && length(expected) > 0L) {
+    vals <- stats::setNames(rep(NA_real_, length(expected)), expected)
+  }
+  if (is.null(names(vals)) || any(!nzchar(names(vals)))) {
+    if (length(expected) == length(vals)) {
+      names(vals) <- expected
+    } else {
+      names(vals) <- paste0("value", seq_along(vals))
+    }
+  }
+  stats::setNames(as.list(as.numeric(vals)), paste(prefix, names(vals), sep = "_"))
 }
