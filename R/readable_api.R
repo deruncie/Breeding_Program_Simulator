@@ -2177,6 +2177,429 @@ run_phenotype_trial <- function(
   state
 }
 
+#' Run a Progeny Test
+#'
+#' Evaluate candidate individuals using phenotypes measured on temporary selfed
+#' or testcross progeny. Progeny are generated and phenotyped in bounded chunks,
+#' summarized by candidate parent, and then discarded. The stored output cohort
+#' contains the original candidate genotypes with progeny-test summaries in
+#' their phenotype slot. Residual error is added after progeny genetic values
+#' are averaged, so `varE` has the same family-mean interpretation as the
+#' entry-level `varE` supplied to [run_phenotype_trial()].
+#'
+#' @param state Program state.
+#' @param pop Candidate AlphaSimR `Pop` to evaluate and retain.
+#' @param output_stage Stage assigned to the evaluated candidate cohort.
+#' @param input_cohorts Candidate source cohort id(s), source bundle, or data
+#'   frame with a `cohort_id` column.
+#' @param mating Progeny-generation design: `"self"` or `"testcross"`.
+#' @param n_progeny Number of progeny generated per self or per
+#'   candidate-by-tester cross.
+#' @param tester AlphaSimR `Pop` used as the male tester population when
+#'   `mating = "testcross"`. Every candidate is crossed to every tester.
+#' @param tester_cohorts Tester source cohort id(s), source bundle, or data
+#'   frame with a `cohort_id` column, used for lineage logging.
+#' @param summary Family summary. Currently `"mean"`.
+#' @param selection_strategy Human-readable description of how candidates were
+#'   selected before the progeny test.
+#' @param traits Trait index/vector. Default `1L`.
+#' @param n_loc Number of trial locations. Default `1L`.
+#' @param reps Phenotyping replications per progeny per location. On the stored
+#'   family mean, residual variance is `varE / reps`. Default `1L`.
+#' @param varE Desired residual variance (or residual covariance matrix) of a
+#'   candidate family mean before division by `reps`. This has the same meaning
+#'   as `varE` in [run_phenotype_trial()]. Do not multiply it by `n_progeny`.
+#' @param synthetic_traits Optional synthetic-trait definitions or registered
+#'   names scored from the progeny-family summaries.
+#' @param duration_years Delay until evaluated candidates are available.
+#' @param stream Output stream label.
+#' @param output_stream Optional output stream override.
+#' @param cycle_id Optional output cycle id override.
+#' @param cost_per_plot Phenotyping cost per progeny plot.
+#' @param trial_name Optional trial label used in event logging.
+#' @param use_env_control Logical; use explicit environment generation.
+#' @param env_means,env_mean_mu,env_mean_sd,env_year_sd Environment-control
+#'   arguments with the same interpretation as [run_phenotype_trial()].
+#' @param log_per_environment Log candidate family summaries separately for
+#'   each environment when environment control is active.
+#' @param log_aggregate Log across-environment candidate family summaries.
+#' @param inherit_genotypes Propagate genotype availability from the candidate
+#'   source cohort to the evaluated output cohort.
+#' @param chunk_size Maximum number of candidates whose progeny are held in
+#'   memory at once.
+#'
+#' @section Family-mean residual calibration:
+#' For candidate \eqn{i}, BPS first averages the environment-specific genetic
+#' values of its generated progeny and then simulates
+#' \deqn{y_i = \bar{G}_i + e_i, \qquad Var(e_i) = varE / reps.}
+#' This is distributionally equivalent to phenotyping each of \eqn{n} progeny
+#' with individual residual variance \eqn{n \times varE} and then taking their
+#' mean. Consequently, increasing `n_progeny` reduces finite-family Mendelian
+#' sampling but does not silently divide the requested residual variance by the
+#' family size. For multiple testers, \eqn{\bar{G}_i} averages all generated
+#' candidate-by-tester progeny.
+#'
+#' Raw AlphaSimR traits are calibrated exactly this way, including a matrix
+#' `varE`. Synthetic traits are calculated from the resulting component-trait
+#' family means. Thus linear synthetic traits retain the same calibration;
+#' nonlinear synthetic traits represent the nonlinear score of component means,
+#' which need not equal the mean nonlinear score across individual progeny.
+#'
+#' @return Updated program state.
+#' @export
+run_progeny_test <- function(
+  state,
+  pop,
+  output_stage,
+  input_cohorts = NULL,
+  mating = c("self", "testcross"),
+  n_progeny,
+  tester = NULL,
+  tester_cohorts = NULL,
+  summary = "mean",
+  selection_strategy = NULL,
+  traits = 1L,
+  n_loc = 1L,
+  reps = 1L,
+  varE,
+  synthetic_traits = NULL,
+  duration_years = 1,
+  stream = "main",
+  output_stream = NULL,
+  cycle_id = NULL,
+  cost_per_plot = 10,
+  trial_name = NULL,
+  use_env_control = FALSE,
+  env_means = NULL,
+  env_mean_mu = NULL,
+  env_mean_sd = NULL,
+  env_year_sd = NULL,
+  log_per_environment = TRUE,
+  log_aggregate = TRUE,
+  inherit_genotypes = TRUE,
+  chunk_size = 100L
+) {
+  if (!methods::is(pop, "Pop")) {
+    stop("run_progeny_test: pop must be an AlphaSimR Pop object.", call. = FALSE)
+  }
+  if (missing(output_stage) || !nzchar(as.character(output_stage))) {
+    stop("run_progeny_test: output_stage is required.", call. = FALSE)
+  }
+  if (missing(varE) || is.null(varE) || any(!is.finite(varE))) {
+    stop("run_progeny_test: varE is required.", call. = FALSE)
+  }
+  mating <- match.arg(mating)
+  if (!identical(summary, "mean")) {
+    stop("run_progeny_test: summary currently must be 'mean'.", call. = FALSE)
+  }
+  n_progeny <- as.numeric(n_progeny)
+  if (length(n_progeny) != 1L || !is.finite(n_progeny) || n_progeny < 1 ||
+      !isTRUE(all.equal(n_progeny, round(n_progeny)))) {
+    stop("run_progeny_test: n_progeny must be a positive whole number.", call. = FALSE)
+  }
+  n_progeny <- as.integer(round(n_progeny))
+  chunk_size <- as.numeric(chunk_size)
+  if (length(chunk_size) != 1L || !is.finite(chunk_size) || chunk_size < 1 ||
+      !isTRUE(all.equal(chunk_size, round(chunk_size)))) {
+    stop("run_progeny_test: chunk_size must be a positive whole number.", call. = FALSE)
+  }
+  chunk_size <- as.integer(round(chunk_size))
+  if (identical(mating, "testcross") && !methods::is(tester, "Pop")) {
+    stop("run_progeny_test: tester must be an AlphaSimR Pop when mating='testcross'.", call. = FALSE)
+  }
+
+  parse_source_ids <- function(x) {
+    if (is.null(x) || length(x) == 0L) return(character(0))
+    if (is.list(x) && !is.null(x$source_ids)) return(parse_source_ids(x$source_ids))
+    if (is.data.frame(x) && "cohort_id" %in% names(x)) return(parse_source_ids(x$cohort_id))
+    out <- as.character(x)
+    unique(out[!is.na(out) & nzchar(out) & out != "NA"])
+  }
+  candidate_source_ids <- parse_source_ids(input_cohorts)
+  tester_source_ids <- if (identical(mating, "testcross")) parse_source_ids(tester_cohorts) else character(0)
+  all_source_ids <- unique(c(candidate_source_ids, tester_source_ids))
+
+  traits <- as.integer(traits %||% 1L)
+  n_loc <- bp_validate_n_loc(n_loc %||% 1L, fn_name = "run_progeny_test")
+  reps <- bp_validate_reps(reps %||% 1L, fn_name = "run_progeny_test")
+  if (is.matrix(varE)) {
+    if (nrow(varE) != length(traits) || ncol(varE) != length(traits)) {
+      stop("run_progeny_test: matrix varE dimensions must match length(traits).", call. = FALSE)
+    }
+    if (!isSymmetric(varE)) {
+      stop("run_progeny_test: matrix varE must be symmetric.", call. = FALSE)
+    }
+    eig <- eigen((varE + t(varE)) / 2, symmetric = TRUE, only.values = TRUE)$values
+    tol <- max(1, max(abs(eig))) * 1e-10
+    if (any(eig < -tol)) {
+      stop("run_progeny_test: matrix varE must be positive semidefinite.", call. = FALSE)
+    }
+  } else {
+    varE_vec <- as.numeric(varE)
+    if (length(varE_vec) != length(traits) || any(varE_vec < 0)) {
+      stop("run_progeny_test: vector varE must contain one non-negative value per trait.", call. = FALSE)
+    }
+  }
+  n_candidates <- pop_n_ind(pop)
+  n_testers <- if (identical(mating, "testcross")) pop_n_ind(tester) else 0L
+  trait_labels <- bp_trait_labels(pop, traits)
+  synthetic_defs <- bp_resolve_synthetic_traits(state, synthetic_traits)
+
+  use_env <- isTRUE(use_env_control) ||
+    !is.null(env_means) || !is.null(env_year_sd) ||
+    !is.null(env_mean_mu) || !is.null(env_mean_sd)
+  if (isTRUE(use_env)) {
+    env_out <- bp_resolve_trial_env(
+      cfg = list(
+        env_means = env_means,
+        env_mean_mu = env_mean_mu,
+        env_mean_sd = env_mean_sd,
+        env_year_sd = env_year_sd
+      ),
+      n_loc = n_loc
+    )
+    p_trial <- matrix(NA_real_, nrow = n_loc, ncol = length(traits))
+    for (e in seq_len(n_loc)) {
+      p_trial[e, ] <- bp_env_p_from_latent(
+        simParam = state$sim$SP,
+        traits = traits,
+        latent_env = env_out$z_env[e]
+      )
+    }
+    p_log <- p_trial
+  } else {
+    # Match AlphaSimR::setPheno(p = NULL): one random environment shared by
+    # traits for each location. Draw once per location so candidate chunks do
+    # not accidentally experience different environments.
+    p_trial <- t(vapply(
+      seq_len(n_loc),
+      function(e) rep(stats::runif(1L), length(traits)),
+      numeric(length(traits))
+    ))
+    p_log <- matrix(NA_real_, nrow = n_loc, ncol = length(traits))
+  }
+
+  family_genetic <- lapply(seq_len(n_loc), function(e) {
+    matrix(NA_real_, nrow = n_candidates, ncol = length(traits))
+  })
+  zero_varE <- if (is.matrix(varE)) {
+    matrix(0, nrow = length(traits), ncol = length(traits))
+  } else {
+    rep(0, length(traits))
+  }
+  chunk_starts <- seq.int(1L, n_candidates, by = chunk_size)
+  for (first in chunk_starts) {
+    idx <- seq.int(first, min(first + chunk_size - 1L, n_candidates))
+    candidate_chunk <- pop_subset(pop, idx)
+
+    if (identical(mating, "self")) {
+      progeny <- AlphaSimR::self(
+        candidate_chunk,
+        nProgeny = n_progeny,
+        keepParents = FALSE,
+        simParam = state$sim$SP
+      )
+      family_index <- rep(seq_along(idx), each = n_progeny)
+    } else {
+      cross_plan <- cbind(
+        rep(seq_along(idx), each = n_testers),
+        rep(seq_len(n_testers), times = length(idx))
+      )
+      progeny <- AlphaSimR::makeCross2(
+        females = candidate_chunk,
+        males = tester,
+        crossPlan = cross_plan,
+        nProgeny = n_progeny,
+        simParam = state$sim$SP
+      )
+      family_index <- rep(cross_plan[, 1L], each = n_progeny)
+    }
+
+    family_n <- tabulate(family_index, nbins = length(idx))
+    for (e in seq_len(n_loc)) {
+      progeny_genetic <- AlphaSimR::setPheno(
+        progeny,
+        varE = zero_varE,
+        reps = 1,
+        traits = traits,
+        p = p_trial[e, ],
+        onlyPheno = TRUE,
+        simParam = state$sim$SP
+      )
+      if (is.null(dim(progeny_genetic))) {
+        progeny_genetic <- matrix(progeny_genetic, ncol = length(traits))
+      }
+      family_sum <- rowsum(progeny_genetic, group = family_index, reorder = FALSE)
+      family_genetic[[e]][idx, ] <- family_sum / family_n
+    }
+  }
+
+  draw_family_error <- function(n) {
+    if (is.matrix(varE)) {
+      bp_draw_correlated_noise(n, varE) / sqrt(reps)
+    } else {
+      varE_vec <- as.numeric(varE)
+      do.call(cbind, lapply(varE_vec, function(v) {
+        stats::rnorm(n, sd = sqrt(v / reps))
+      }))
+    }
+  }
+  family_pheno <- lapply(family_genetic, function(g) {
+    g + draw_family_error(n_candidates)
+  })
+
+  aggregate_pheno <- Reduce("+", family_pheno) / n_loc
+  evaluated_pop <- bp_assign_trial_pheno(pop, traits, aggregate_pheno)
+  synthetic_out <- bp_score_synthetic_trial(
+    pop = evaluated_pop,
+    definitions = synthetic_defs,
+    measured_traits = traits,
+    env_pheno = family_pheno
+  )
+  evaluated_pop <- synthetic_out$pop
+
+  source_cycle <- {
+    rows <- state$cohorts[state$cohorts$cohort_id %in% candidate_source_ids, , drop = FALSE]
+    cycles <- unique(as.character(rows$cycle_id))
+    cycles <- cycles[!is.na(cycles) & nzchar(cycles) & cycles != "NA"]
+    if (length(cycles) == 1L) cycles[[1L]] else as.character(cycle_id %||% "cycle_1")
+  }
+  stage_name <- as.character(output_stage)
+  design_desc <- if (identical(mating, "self")) "self progeny test" else "testcross progeny test"
+  state <- bp_add_cohort(
+    state = state,
+    pop = evaluated_pop,
+    stage = stage_name,
+    stream = as.character(output_stream %||% stream %||% "main"),
+    cycle_id = source_cycle,
+    source_cohort_id = if (length(all_source_ids) == 0L) NA_character_ else paste(all_source_ids, collapse = ";"),
+    selection_strategy = as.character(selection_strategy %||% "unspecified"),
+    cross_strategy = design_desc,
+    duration_years = as.numeric(duration_years %||% 1)
+  )
+  new_cohort_id <- bp_last_cohort_id(state)
+  if (isTRUE(inherit_genotypes %||% TRUE)) {
+    state <- bp_inherit_genotypes_from_source(state, new_cohort_id, candidate_source_ids)
+  }
+
+  avail_tick <- state$cohorts$available_tick[match(new_cohort_id, state$cohorts$cohort_id)]
+  family_size <- n_progeny * if (identical(mating, "testcross")) n_testers else 1L
+  trial_label <- as.character(trial_name %||% stage_name)
+  state <- bp_log_event(
+    state = state,
+    fn = "run_progeny_test",
+    event_type = "progeny_testing",
+    stage = stage_name,
+    source_ids = all_source_ids,
+    output_id = new_cohort_id,
+    event_string = sprintf(
+      "Year %s: Started %s for n=%d candidates using %s (%d progeny per cross, %d locations, %s rep per location). Evaluated candidates will be available Year %s.",
+      bp_format_year(bp_tick_to_year(state, state$time$tick)),
+      trial_label,
+      n_candidates,
+      design_desc,
+      n_progeny,
+      n_loc,
+      reps,
+      bp_format_year(bp_tick_to_year(state, avail_tick))
+    ),
+    template_string = sprintf(
+      "Progeny-test %s by %s (n_prog=%d, %d loc x %s rep, traits %s, dur %.2f)",
+      stage_name, mating, n_progeny, n_loc, reps, paste(traits, collapse = ","),
+      as.numeric(duration_years %||% 1)
+    ),
+    details = list(
+      mating = mating,
+      n_progeny = n_progeny,
+      n_testers = n_testers,
+      family_size = family_size,
+      summary = summary,
+      traits = traits,
+      n_loc = n_loc,
+      reps = reps,
+      varE = varE,
+      residual_scale = "candidate_family_mean",
+      tester_source_ids = tester_source_ids,
+      n_candidates = n_candidates
+    )
+  )
+
+  if (isTRUE(use_env) && isTRUE(log_per_environment %||% TRUE)) {
+    for (e in seq_len(n_loc)) {
+      state <- bp_record_pheno(
+        state = state,
+        cohort_id = new_cohort_id,
+        stage = stage_name,
+        individual_id = evaluated_pop@id,
+        traits = trait_labels,
+        pheno_matrix = family_pheno[[e]],
+        available_tick = avail_tick,
+        n_loc = n_loc,
+        reps = reps,
+        environment = e,
+        p_value = p_log[e, ]
+      )
+      if (!is.null(synthetic_out$environments)) {
+        state <- bp_record_pheno(
+          state = state,
+          cohort_id = new_cohort_id,
+          stage = stage_name,
+          individual_id = evaluated_pop@id,
+          traits = paste0("synthetic:", colnames(synthetic_out$environments[[e]])),
+          pheno_matrix = synthetic_out$environments[[e]],
+          available_tick = avail_tick,
+          n_loc = n_loc,
+          reps = reps,
+          environment = e,
+          p_value = mean(p_log[e, ])
+        )
+      }
+    }
+  }
+  if (isTRUE(log_aggregate %||% TRUE)) {
+    state <- bp_record_pheno(
+      state = state,
+      cohort_id = new_cohort_id,
+      stage = stage_name,
+      individual_id = evaluated_pop@id,
+      traits = trait_labels,
+      pheno_matrix = aggregate_pheno,
+      available_tick = avail_tick,
+      n_loc = n_loc,
+      reps = reps,
+      environment = 0L,
+      p_value = if (isTRUE(use_env)) colMeans(p_log) else rep(NA_real_, length(traits))
+    )
+    if (!is.null(synthetic_out$aggregate)) {
+      state <- bp_record_pheno(
+        state = state,
+        cohort_id = new_cohort_id,
+        stage = stage_name,
+        individual_id = evaluated_pop@id,
+        traits = paste0("synthetic:", colnames(synthetic_out$aggregate)),
+        pheno_matrix = synthetic_out$aggregate,
+        available_tick = avail_tick,
+        n_loc = n_loc,
+        reps = reps,
+        environment = 0L,
+        p_value = NA_real_
+      )
+    }
+  }
+
+  n_plots <- n_candidates * family_size * n_loc * reps
+  state <- bp_add_cost(
+    state = state,
+    stage = stage_name,
+    cohort_id = new_cohort_id,
+    event = "phenotype_trial",
+    unit = "progeny_plot",
+    n_units = n_plots,
+    unit_cost = as.numeric(cost_per_plot %||% 10)
+  )
+  state
+}
+
 #' Run Genotyping
 #'
 #' Schedule/log genotyping events by cohort and chip, with genotyping costs.
