@@ -13,7 +13,12 @@ bp_set_trait_baseline(
   names = NULL,
   label = "default",
   include_index = FALSE,
-  index_weights = NULL
+  index_weights = NULL,
+  synthetic_traits = NULL,
+  varE = NULL,
+  synthetic_gv_n_trials = 100L,
+  synthetic_gv_n_plants = 10L,
+  seed = NULL
 )
 }
 \arguments{
@@ -36,6 +41,18 @@ when `values` are supplied.}
 \item{include_index}{Whether to add an index baseline.}
 
 \item{index_weights}{Optional index weights.}
+
+\item{synthetic_traits}{Optional synthetic-trait definitions or registered
+names to add to the baseline.}
+
+\item{varE}{Residual covariance used for nonlinear synthetic GVs.}
+
+\item{synthetic_gv_n_trials}{Number of TPE trials for nonlinear synthetic
+GV integration.}
+
+\item{synthetic_gv_n_plants}{Number of plant residual draws per trial.}
+
+\item{seed}{Optional Monte Carlo seed.}
 }
 \value{
 Updated program state.

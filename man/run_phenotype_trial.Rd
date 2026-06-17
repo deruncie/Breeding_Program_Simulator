@@ -15,6 +15,7 @@ run_phenotype_trial(
   n_loc = 1L,
   reps = 1L,
   varE = NULL,
+  synthetic_traits = NULL,
   duration_years = 1,
   stream = "main",
   output_stream = NULL,
@@ -56,6 +57,9 @@ logging.}
 \item{reps}{Replications per location. Default `1L`.}
 
 \item{varE}{Residual variance passed to `AlphaSimR::setPheno`.}
+
+\item{synthetic_traits}{Optional synthetic-trait definitions or registered
+names to score from the generated biological phenotypes.}
 
 \item{duration_years}{Delay until output cohort is available.}
 

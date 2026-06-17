@@ -34,6 +34,9 @@ object, trained tick, chip key, trait index, and source cohorts.
 \describe{
   \item{`chip`}{Genotyping chip key/index. Default `state$sim$default_chip`.}
   \item{`trait`}{Trait index for default RRBLUP model.}
+  \item{`response`}{`"trait"` (default) or `"synthetic_pheno"`.}
+  \item{`synthetic_trait`}{Registered name or definition when
+  `response = "synthetic_pheno"`.}
   \item{`lookback_years`}{Training cohort lookback window.}
   \item{`training_policy`}{Subset policy over eligible training cohorts.}
   \item{`model_id`}{Stored model id. Auto-generated if omitted.}

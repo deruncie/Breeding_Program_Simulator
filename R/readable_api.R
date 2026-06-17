@@ -16,6 +16,7 @@ bp_init_state <- function(SP, dt = 0.25, start_time = 0, sim = list()) {
   sim_defaults <- list(
     SP = SP,
     default_chip = 1L,
+    synthetic_traits = list(),
     trait_baselines = list(
       default = list(
         label = "default",
@@ -105,7 +106,7 @@ bp_debug_break <- function(state, cfg, where = NULL, year = NULL, tick = NULL) {
   if (length(obj_names) > 0L) {
     n_show <- as.integer(cfg$debug_n_vars %||% 12L)
     n_show <- max(1L, n_show)
-    show_names <- head(sort(obj_names), n_show)
+    show_names <- utils::head(sort(obj_names), n_show)
     parts <- vapply(show_names, function(nm) {
       x <- get(nm, envir = caller)
       cls <- class(x)[1]
@@ -209,7 +210,15 @@ bp_empty_variety_log <- function() {
   )
 }
 
-# Pure helper: infer number of individuals in a pop-like object.
+#' Count Individuals in a Population-Like Object
+#'
+#' Return the number of individuals represented by an AlphaSimR population,
+#' matrix, data frame, or another object that implements [nrow()].
+#'
+#' @param pop Population-like object.
+#'
+#' @return Integer number of individuals.
+#' @export
 pop_n_ind <- function(pop) {
   if (methods::is(pop, "Pop") || methods::is(pop, "RawPop")) {
     return(as.integer(pop@nInd))
@@ -1538,6 +1547,8 @@ merge_pops <- function(pop_list) {
 #' @param n_loc Number of locations represented. Default `1L`.
 #' @param reps Replications per location. Default `1L`.
 #' @param varE Residual variance passed to `AlphaSimR::setPheno`.
+#' @param synthetic_traits Optional synthetic-trait definitions or registered
+#'   names to score from the generated biological phenotypes.
 #' @param duration_years Delay until output cohort is available.
 #' @param stream Output stream label (default `"main"`).
 #' @param output_stream Optional output stream override.
@@ -1661,6 +1672,7 @@ run_phenotype_trial <- function(
   n_loc = 1L,
   reps = 1L,
   varE = NULL,
+  synthetic_traits = NULL,
   duration_years = 1,
   stream = "main",
   output_stream = NULL,
@@ -1703,6 +1715,7 @@ run_phenotype_trial <- function(
     stage_name <- as.character(output_stage)
     pop_trial <- pop
     trait_labels <- bp_trait_labels(pop_trial, traits)
+    synthetic_defs <- bp_resolve_synthetic_traits(state, synthetic_traits)
 
     use_env <- isTRUE(use_env_control) ||
       !is.null(env_means) || !is.null(env_year_sd) ||
@@ -1763,6 +1776,13 @@ run_phenotype_trial <- function(
       p_env <- rep(NA_real_, n_loc)
     }
 
+    synthetic_out <- bp_score_synthetic_trial(
+      pop = pop_trial,
+      definitions = synthetic_defs,
+      measured_traits = traits,
+      env_pheno = env_pheno
+    )
+    pop_trial <- synthetic_out$pop
 
     src_cycle <- {
       if (length(source_ids) == 0L) {
@@ -1854,6 +1874,21 @@ run_phenotype_trial <- function(
           environment = e,
           p_value = p_env[e, ]
         )
+        if (!is.null(synthetic_out$environments)) {
+          state <- bp_record_pheno(
+            state = state,
+            cohort_id = new_cohort_id,
+            stage = stage_name,
+            individual_id = pop_trial@id,
+            traits = paste0("synthetic:", colnames(synthetic_out$environments[[e]])),
+            pheno_matrix = synthetic_out$environments[[e]],
+            available_tick = avail_tick,
+            n_loc = n_loc,
+            reps = reps,
+            environment = e,
+            p_value = mean(p_env[e, ])
+          )
+        }
       }
     }
 
@@ -1872,6 +1907,21 @@ run_phenotype_trial <- function(
         environment = 0L,
         p_value = if (is.matrix(p_env)) colMeans(p_env) else mean(p_env)
       )
+      if (!is.null(synthetic_out$aggregate)) {
+        state <- bp_record_pheno(
+          state = state,
+          cohort_id = new_cohort_id,
+          stage = stage_name,
+          individual_id = pop_trial@id,
+          traits = paste0("synthetic:", colnames(synthetic_out$aggregate)),
+          pheno_matrix = synthetic_out$aggregate,
+          available_tick = avail_tick,
+          n_loc = n_loc,
+          reps = reps,
+          environment = 0L,
+          p_value = NA_real_
+        )
+      }
     }
 
     n_plots <- pop_n_ind(pop_trial) * n_loc * reps
@@ -1904,6 +1954,7 @@ run_phenotype_trial <- function(
   }
 
   traits <- as.integer(cfg$traits %||% 1L)
+  synthetic_defs <- bp_resolve_synthetic_traits(state, cfg$synthetic_traits %||% NULL)
   n_loc <- bp_validate_n_loc(cfg$n_loc %||% 1L, fn_name = "run_phenotype_trial")
   reps <- bp_validate_reps(cfg$reps %||% 1L, fn_name = "run_phenotype_trial")
   use_env_control <- isTRUE(cfg$use_env_control %||% FALSE) ||
@@ -1964,6 +2015,14 @@ run_phenotype_trial <- function(
       env_pheno <- NULL
       p_env <- rep(NA_real_, n_loc)
     }
+
+    synthetic_out <- bp_score_synthetic_trial(
+      pop = pop_trial,
+      definitions = synthetic_defs,
+      measured_traits = traits,
+      env_pheno = env_pheno
+    )
+    pop_trial <- synthetic_out$pop
 
     state <- bp_add_cohort(
       state = state,
@@ -2049,6 +2108,21 @@ run_phenotype_trial <- function(
           environment = e,
           p_value = p_env[e, ]
         )
+        if (!is.null(synthetic_out$environments)) {
+          state <- bp_record_pheno(
+            state = state,
+            cohort_id = new_cohort_id,
+            stage = stage_name,
+            individual_id = pop_trial@id,
+            traits = paste0("synthetic:", colnames(synthetic_out$environments[[e]])),
+            pheno_matrix = synthetic_out$environments[[e]],
+            available_tick = avail_tick,
+            n_loc = n_loc,
+            reps = reps,
+            environment = e,
+            p_value = mean(p_env[e, ])
+          )
+        }
       }
     }
 
@@ -2067,6 +2141,21 @@ run_phenotype_trial <- function(
         environment = 0L,
         p_value = if (is.matrix(p_env)) colMeans(p_env) else mean(p_env)
       )
+      if (!is.null(synthetic_out$aggregate)) {
+        state <- bp_record_pheno(
+          state = state,
+          cohort_id = new_cohort_id,
+          stage = stage_name,
+          individual_id = pop_trial@id,
+          traits = paste0("synthetic:", colnames(synthetic_out$aggregate)),
+          pheno_matrix = synthetic_out$aggregate,
+          available_tick = avail_tick,
+          n_loc = n_loc,
+          reps = reps,
+          environment = 0L,
+          p_value = NA_real_
+        )
+      }
     }
 
     n_plots <- pop_n_ind(pop_trial) * n_loc * reps
@@ -2309,6 +2398,8 @@ predict_ebv_pop <- function(pop, model_entry, state, cfg, stage_label = "unknown
   }
 
   predict_fn <- cfg$predict_ebv_fn %||% model_entry$predict_ebv_fn %||% NULL
+  response_type <- as.character(model_entry$response_type %||% "trait")
+  synthetic_name <- as.character(model_entry$synthetic_trait %||% cfg$synthetic_trait %||% "")
 
   if (is.function(predict_fn)) {
     pred <- bp_call_user_fn(
@@ -2319,6 +2410,30 @@ predict_ebv_pop <- function(pop, model_entry, state, cfg, stage_label = "unknown
     )
     n <- pop_n_ind(pop)
 
+    if (is.list(pred) && !is.data.frame(pred)) {
+      if (!is.null(pred$trait_ebv)) {
+        trait_ebv <- as.matrix(pred$trait_ebv)
+        if (nrow(trait_ebv) != n || ncol(trait_ebv) < 1L || anyNA(trait_ebv)) {
+          stop("predict_ebv_fn returned invalid trait_ebv.", call. = FALSE)
+        }
+        storage.mode(trait_ebv) <- "double"
+        pop@ebv <- trait_ebv
+      }
+      if (!is.null(pred$synthetic_ebv)) {
+        syn <- pred$synthetic_ebv
+        if (is.list(syn) && is.null(dim(syn))) {
+          for (nm in names(syn)) pop <- bp_set_synthetic_values(pop, nm, syn[[nm]], type = "ebv")
+        } else {
+          syn <- as.matrix(syn)
+          if (nrow(syn) != n || is.null(colnames(syn)) || anyNA(syn)) {
+            stop("predict_ebv_fn returned invalid synthetic_ebv.", call. = FALSE)
+          }
+          for (nm in colnames(syn)) pop <- bp_set_synthetic_values(pop, nm, syn[, nm], type = "ebv")
+        }
+      }
+      return(pop)
+    }
+
     if (is.null(dim(pred))) {
       pred_vec <- as.numeric(pred)
       if (length(pred_vec) != n) {
@@ -2327,7 +2442,11 @@ predict_ebv_pop <- function(pop, model_entry, state, cfg, stage_label = "unknown
       if (anyNA(pred_vec)) {
         stop("predict_ebv_fn returned NA values", call. = FALSE)
       }
-      pop@ebv <- matrix(pred_vec, ncol = 1)
+      if (identical(response_type, "synthetic")) {
+        pop <- bp_set_synthetic_values(pop, synthetic_name, pred_vec, type = "ebv")
+      } else {
+        pop@ebv <- matrix(pred_vec, ncol = 1)
+      }
     } else {
       pred_mat <- as.matrix(pred)
       if (nrow(pred_mat) != n) {
@@ -2340,12 +2459,22 @@ predict_ebv_pop <- function(pop, model_entry, state, cfg, stage_label = "unknown
         stop("predict_ebv_fn returned NA values", call. = FALSE)
       }
       storage.mode(pred_mat) <- "double"
-      pop@ebv <- pred_mat
+      if (identical(response_type, "synthetic")) {
+        if (ncol(pred_mat) != 1L) stop("A synthetic model must return one prediction column.", call. = FALSE)
+        pop <- bp_set_synthetic_values(pop, synthetic_name, pred_mat[, 1L], type = "ebv")
+      } else {
+        pop@ebv <- pred_mat
+      }
     }
     return(pop)
   }
 
-  AlphaSimR::setEBV(pop, solution = model_entry$model, simParam = state$sim$SP)
+  predicted <- AlphaSimR::setEBV(pop, solution = model_entry$model, simParam = state$sim$SP)
+  if (identical(response_type, "synthetic")) {
+    bp_set_synthetic_values(pop, synthetic_name, predicted@ebv[, 1L], type = "ebv")
+  } else {
+    predicted
+  }
 }
 
 #' Predict EBV for Cohorts in State
@@ -2434,6 +2563,9 @@ run_predict_ebv <- function(state, cfg) {
 #' \describe{
 #'   \item{`chip`}{Genotyping chip key/index. Default `state$sim$default_chip`.}
 #'   \item{`trait`}{Trait index for default RRBLUP model.}
+#'   \item{`response`}{`"trait"` (default) or `"synthetic_pheno"`.}
+#'   \item{`synthetic_trait`}{Registered name or definition when
+#'   `response = "synthetic_pheno"`.}
 #'   \item{`lookback_years`}{Training cohort lookback window.}
 #'   \item{`training_policy`}{Subset policy over eligible training cohorts.}
 #'   \item{`model_id`}{Stored model id. Auto-generated if omitted.}
@@ -2492,6 +2624,18 @@ run_train_gp_model <- function(state, cfg) {
   cidx <- chip_index(state, chip_raw)
   trait <- as.integer(cfg$trait %||% 1L)
   stage_label <- as.character(cfg$from_stage %||% "unknown")
+  response <- match.arg(as.character(cfg$response %||% "trait"), c("trait", "synthetic_pheno"))
+  synthetic_def <- NULL
+  if (identical(response, "synthetic_pheno")) {
+    synthetic_def <- bp_resolve_synthetic_traits(state, cfg$synthetic_trait %||% NULL)
+    if (length(synthetic_def) != 1L) stop("Synthetic training requires exactly one synthetic_trait.", call. = FALSE)
+    synthetic_def <- synthetic_def[[1L]]
+    y <- unlist(lapply(pops, function(p) {
+      bp_get_stored_synthetic_values(p, synthetic_def$name, type = "pheno")
+    }), use.names = FALSE)
+    if (length(y) != train_pop@nInd || anyNA(y)) stop("Synthetic training phenotypes are incomplete.", call. = FALSE)
+    train_pop <- bp_set_synthetic_values(train_pop, synthetic_def$name, y, type = "pheno")
+  }
 
   if (is.function(cfg$train_model_fn)) {
     model <- bp_call_user_fn(
@@ -2501,7 +2645,20 @@ run_train_gp_model <- function(state, cfg) {
       stage_label = stage_label
     )
   } else {
-    model <- AlphaSimR::RRBLUP(train_pop, traits = trait, use = "pheno", snpChip = cidx, simParam = state$sim$SP)
+    if (identical(response, "synthetic_pheno")) {
+      synthetic_name <- synthetic_def$name
+      model <- AlphaSimR::RRBLUP(
+        train_pop,
+        traits = function(Y, ...) as.matrix(Y),
+        use = function(p, ...) {
+          matrix(bp_get_stored_synthetic_values(p, synthetic_name, type = "pheno"), ncol = 1L)
+        },
+        snpChip = cidx,
+        simParam = state$sim$SP
+      )
+    } else {
+      model <- AlphaSimR::RRBLUP(train_pop, traits = trait, use = "pheno", snpChip = cidx, simParam = state$sim$SP)
+    }
   }
   if (is.null(model)) {
     stop("run_train_gp_model: model object is NULL", call. = FALSE)
@@ -2515,6 +2672,8 @@ run_train_gp_model <- function(state, cfg) {
     model_id = model_id,
     model_name = as.character(cfg$model_name %||% if (is.function(cfg$train_model_fn)) "custom_train_model_fn" else "AlphaSimR::RRBLUP"),
     predict_ebv_fn = cfg$predict_ebv_fn %||% NULL,
+    response_type = if (identical(response, "synthetic_pheno")) "synthetic" else "trait",
+    synthetic_trait = if (is.null(synthetic_def)) NULL else synthetic_def$name,
     trained_tick = as.integer(state$time$tick),
     chip = ckey,
     trait = trait,

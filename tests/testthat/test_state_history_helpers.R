@@ -529,7 +529,7 @@ test_that("bp_scan_cfg_requirements handles method calls with cfg arguments", {
   expect_match(scan$skeleton, "nSnpPerChrom = XX", fixed = TRUE)
 })
 
-test_that("bp_report_stage_metric reports and scales simple AlphaSimR metrics", {
+test_that("bp_report_stage_metrics reports and scales simple AlphaSimR metrics", {
   testthat::skip_if_not_installed("AlphaSimR")
   library(AlphaSimR)
 
@@ -547,23 +547,23 @@ test_that("bp_report_stage_metric reports and scales simple AlphaSimR metrics", 
   )
 
   expect_equal(
-    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "meanG"),
+    bp_report_stage_metrics(state, "PYT", metrics = c(value = "meanG"))$value,
     mean(pop@gv[, 1]) / 2
   )
   expect_equal(
-    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "maxG"),
+    bp_report_stage_metrics(state, "PYT", metrics = c(value = "maxG"))$value,
     max(pop@gv[, 1]) / 2
   )
   expect_equal(
-    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "varG"),
+    bp_report_stage_metrics(state, "PYT", metrics = c(value = "varG"))$value,
     stats::var(pop@gv[, 1]) / 4
   )
   expect_equal(
-    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV"),
+    bp_report_stage_metrics(state, "PYT", metrics = c(value = "accEBV"))$value,
     1
   )
   expect_equal(
-    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "wf_accEBV"),
+    bp_report_stage_metrics(state, "PYT", metrics = c(value = "wf_accEBV"))$value,
     1
   )
 
@@ -573,11 +573,11 @@ test_that("bp_report_stage_metric reports and scales simple AlphaSimR metrics", 
   pop_no_ebv@pheno <- pop_no_ebv@gv
   state$pops[[cid]] <- pop_no_ebv
   expect_equal(
-    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV"),
+    bp_report_stage_metrics(state, "PYT", metrics = c(value = "accEBV"))$value,
     1
   )
   expect_equal(
-    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "wf_accEBV"),
+    bp_report_stage_metrics(state, "PYT", metrics = c(value = "wf_accEBV"))$value,
     1
   )
 
@@ -585,16 +585,16 @@ test_that("bp_report_stage_metric reports and scales simple AlphaSimR metrics", 
   pop_no_pred@ebv <- matrix(numeric(0), nrow = pop_no_pred@nInd, ncol = 0L)
   pop_no_pred@pheno <- matrix(numeric(0), nrow = pop_no_pred@nInd, ncol = 0L)
   state$pops[[cid]] <- pop_no_pred
-  expect_true(is.na(BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV")))
-  expect_true(is.na(BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "wf_accEBV")))
+  expect_true(is.na(bp_report_stage_metrics(state, "PYT", metrics = c(value = "accEBV"))$value))
+  expect_true(is.na(bp_report_stage_metrics(state, "PYT", metrics = c(value = "wf_accEBV"))$value))
 
   expect_error(
-    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accGV"),
-    "'arg' should be one of"
+    bp_report_stage_metrics(state, "PYT", metrics = "accGV"),
+    "metrics must contain only"
   )
 })
 
-test_that("bp_report_stage_metric treats zero-column EBV matrices as unavailable", {
+test_that("bp_report_stage_metrics treats zero-column EBV matrices as unavailable", {
   testthat::skip_if_not_installed("AlphaSimR")
   library(AlphaSimR)
 
@@ -609,16 +609,16 @@ test_that("bp_report_stage_metric treats zero-column EBV matrices as unavailable
   state <- BreedingProgramSimulator:::put_stage_pop(state, pop, stage = "PYT", ready_in_years = 0)
 
   expect_equal(
-    BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV", traits = 1L),
+    bp_report_stage_metrics(state, "PYT", metrics = c(value = "accEBV"), traits = 1L)$value,
     1
   )
 
   cid <- BreedingProgramSimulator:::bp_last_cohort_id(state)
   state$pops[[cid]]@pheno <- matrix(numeric(0), nrow = pop@nInd, ncol = 0L)
-  expect_true(is.na(BreedingProgramSimulator:::bp_report_stage_metric(state, "PYT", metric = "accEBV", traits = 1L)))
+  expect_true(is.na(bp_report_stage_metrics(state, "PYT", metrics = c(value = "accEBV"), traits = 1L)$value))
 })
 
-test_that("bp_report_stage_metric scales multi-trait index reports", {
+test_that("bp_report_stage_metrics reports biological traits and synthetic index separately", {
   testthat::skip_if_not_installed("AlphaSimR")
   library(AlphaSimR)
 
@@ -629,48 +629,184 @@ test_that("bp_report_stage_metric scales multi-trait index reports", {
   pop <- newPop(h, simParam = SP)
   pop@ebv <- pop@gv
   w <- c(1, -0.5)
+  index_def <- bp_synthetic_trait(
+    "Index",
+    traits = 1:2,
+    fun = AlphaSimR::selIndex,
+    args = list(b = w),
+    linear = TRUE
+  )
+  idx <- as.numeric(AlphaSimR::selIndex(pop@gv[, 1:2, drop = FALSE], b = w))
+  pop <- bp_set_synthetic_values(pop, "Index", idx, type = "ebv")
 
   state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
-  state <- BreedingProgramSimulator:::bp_set_trait_baseline(state, pop = pop, include_index = TRUE, index_weights = w)
+  state <- bp_register_synthetic_traits(state, index_def)
+  state <- BreedingProgramSimulator:::bp_set_trait_baseline(
+    state,
+    pop = pop,
+    synthetic_traits = "Index"
+  )
   state <- BreedingProgramSimulator:::put_stage_pop(state, pop, stage = "PYT", ready_in_years = 0)
 
-  mean_out <- BreedingProgramSimulator:::bp_report_stage_metric(
-    state, "PYT", metric = "meanG", traits = 1:2, include_index = TRUE, index_weights = w
+  mean_out <- bp_report_stage_metrics(
+    state, "PYT", metrics = c(value = "meanG"), traits = 1:2,
+    append_trait = "always"
   )
-  var_out <- BreedingProgramSimulator:::bp_report_stage_metric(
-    state, "PYT", metric = "varG", traits = 1:2, include_index = TRUE, index_weights = w
+  index_out <- bp_report_stage_metrics(
+    state, "PYT", metrics = c(value = "meanG"), synthetic_trait = "Index",
+    append_trait = "always"
   )
-  acc_out <- BreedingProgramSimulator:::bp_report_stage_metric(
-    state, "PYT", metric = "accEBV", traits = 1:2, include_index = TRUE, index_weights = w
+  acc_index_out <- bp_report_stage_metrics(
+    state, "PYT", metrics = c(value = "accEBV"), synthetic_trait = "Index",
+    append_trait = "always"
   )
 
-  expect_true("Index" %in% names(mean_out))
-  expect_false(is.na(mean_out[["Index"]]))
-  expect_equal(unname(mean_out), rep(0, 3), tolerance = 1e-10)
-  expect_equal(unname(var_out), rep(1, 3), tolerance = 1e-10)
-  expect_equal(unname(acc_out), rep(1, 3), tolerance = 1e-10)
+  expect_equal(names(mean_out), c("value_Trait1", "value_Trait2"))
+  expect_equal(names(index_out), "value_Index")
+  expect_equal(unlist(mean_out, use.names = FALSE), rep(0, 2), tolerance = 1e-10)
+  expect_equal(unlist(index_out, use.names = FALSE), 0, tolerance = 1e-10)
+  expect_equal(unlist(acc_index_out, use.names = FALSE), 1, tolerance = 1e-10)
 })
 
-test_that("bp_report_stage_columns returns stable NA columns when no cohort is available", {
+test_that("bp_report_stage_metrics does not use synthetic-only baselines for biological traits", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  h <- quickHaplo(24, 2, 50)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10, name = "Trait1")
+  SP$addTraitA(10, name = "Trait2")
+  pop <- newPop(h, simParam = SP)
+  index_def <- bp_synthetic_trait(
+    "Index",
+    traits = 1:2,
+    fun = AlphaSimR::selIndex,
+    args = list(b = c(0.5, 0.5)),
+    linear = TRUE
+  )
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  state <- bp_register_synthetic_traits(state, index_def)
+  state$sim$trait_baselines$default <- list(
+    label = "default",
+    traits = "Index",
+    mean = c(Index = 100),
+    sd = c(Index = 10),
+    source = "values"
+  )
+  state <- BreedingProgramSimulator:::put_stage_pop(state, pop, stage = "PYT", ready_in_years = 0)
+
+  biological <- bp_report_stage_metrics(
+    state,
+    "PYT",
+    metrics = c(value = "meanG"),
+    traits = c("Trait1", "Trait2"),
+    append_trait = "always"
+  )
+  synthetic <- bp_report_stage_metrics(
+    state,
+    "PYT",
+    metrics = c(value = "meanG"),
+    synthetic_trait = "Index",
+    append_trait = "always"
+  )
+  raw_index <- mean(AlphaSimR::selIndex(pop@gv[, 1:2, drop = FALSE], b = c(0.5, 0.5)))
+
+  expect_equal(
+    unlist(biological, use.names = FALSE),
+    c(mean(pop@gv[, 1]), mean(pop@gv[, 2]))
+  )
+  expect_equal(unlist(synthetic, use.names = FALSE), (raw_index - 100) / 10)
+})
+
+test_that("bp_report_stage_metrics falls back to positional baseline scaling when names differ", {
+  testthat::skip_if_not_installed("AlphaSimR")
+  library(AlphaSimR)
+
+  h <- quickHaplo(16, 2, 40)
+  SP <- SimParam$new(h)
+  SP$addTraitA(10, name = "Trait1")
+  SP$addTraitA(10, name = "Trait2")
+  pop <- newPop(h, simParam = SP)
+
+  state <- BreedingProgramSimulator:::bp_init_state(SP = SP, dt = 1, start_time = 0)
+  state <- BreedingProgramSimulator:::put_stage_pop(state, pop, stage = "PYT", ready_in_years = 0)
+  state <- BreedingProgramSimulator:::bp_set_trait_baseline(
+    state,
+    values = list(mean = c(trait1 = 100, trait2 = 200), sd = c(trait1 = 2, trait2 = 4))
+  )
+
+  out <- bp_report_stage_metrics(
+    state,
+    "PYT",
+    metrics = c(value = "meanG"),
+    traits = 1:2,
+    append_trait = "always"
+  )
+
+  expect_equal(
+    unlist(out, use.names = FALSE),
+    c((mean(pop@gv[, 1]) - 100) / 2, (mean(pop@gv[, 2]) - 200) / 4)
+  )
+
+  out_trait2 <- bp_report_stage_metrics(
+    state,
+    "PYT",
+    metrics = c(value = "meanG"),
+    traits = 2,
+    append_trait = "always"
+  )
+
+  expect_equal(
+    unlist(out_trait2, use.names = FALSE),
+    (mean(pop@gv[, 2]) - 200) / 4
+  )
+
+  out_character <- bp_report_stage_metrics(
+    state,
+    "PYT",
+    metrics = c(value = "meanG"),
+    traits = c("Trait1", "Trait2"),
+    append_trait = "always"
+  )
+
+  expect_equal(
+    unlist(out_character, use.names = FALSE),
+    c((mean(pop@gv[, 1]) - 100) / 2, (mean(pop@gv[, 2]) - 200) / 4)
+  )
+
+  state$sim$trait_baselines$default$mean <- c(Trait1 = 100, Trait2 = NA_real_, trait2 = 200)
+  state$sim$trait_baselines$default$sd <- c(Trait1 = 2, Trait2 = NA_real_, trait2 = 4)
+  out_stale_name <- bp_report_stage_metrics(
+    state,
+    "PYT",
+    metrics = c(value = "meanG"),
+    traits = c("Trait1", "Trait2"),
+    append_trait = "always"
+  )
+
+  expect_equal(
+    unlist(out_stale_name, use.names = FALSE),
+    c((mean(pop@gv[, 1]) - 100) / 2, (mean(pop@gv[, 2]) - 200) / 4)
+  )
+})
+
+test_that("bp_report_stage_metrics returns stable NA columns when no cohort is available", {
   state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
   state <- BreedingProgramSimulator:::bp_set_trait_baseline(
     state,
     values = list(mean = c(Trait1 = 0, Trait2 = 0), sd = c(Trait1 = 1, Trait2 = 1)),
-    covariance = diag(2),
-    include_index = TRUE,
-    index_weights = c(1, 1)
+    covariance = diag(2)
   )
 
-  out <- BreedingProgramSimulator:::bp_report_stage_columns(
+  out <- bp_report_stage_metrics(
     state,
     stage = "PYT",
-    metric = "meanG",
+    metrics = c(meanPYT = "meanG"),
     traits = c("Trait1", "Trait2"),
-    include_index = TRUE,
-    index_weights = c(1, 1),
-    prefix = "meanPYT"
+    append_trait = "always"
   )
 
-  expect_equal(names(out), c("meanPYT_Trait1", "meanPYT_Trait2", "meanPYT_Index"))
+  expect_equal(names(out), c("meanPYT_Trait1", "meanPYT_Trait2"))
   expect_true(all(vapply(out, is.na, logical(1))))
 })

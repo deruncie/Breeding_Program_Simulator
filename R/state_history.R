@@ -539,6 +539,13 @@ bp_make_varE <- function(h2, varG, corE, trait_names = NULL) {
 #' @param label Baseline label.
 #' @param include_index Whether to add an index baseline.
 #' @param index_weights Optional index weights.
+#' @param synthetic_traits Optional synthetic-trait definitions or registered
+#'   names to add to the baseline.
+#' @param varE Residual covariance used for nonlinear synthetic GVs.
+#' @param synthetic_gv_n_trials Number of TPE trials for nonlinear synthetic
+#'   GV integration.
+#' @param synthetic_gv_n_plants Number of plant residual draws per trial.
+#' @param seed Optional Monte Carlo seed.
 #'
 #' @return Updated program state.
 #' @export
@@ -551,7 +558,12 @@ bp_set_trait_baseline <- function(
   names = NULL,
   label = "default",
   include_index = FALSE,
-  index_weights = NULL
+  index_weights = NULL,
+  synthetic_traits = NULL,
+  varE = NULL,
+  synthetic_gv_n_trials = 100L,
+  synthetic_gv_n_plants = 10L,
+  seed = NULL
 ) {
   label <- as.character(label %||% "default")
   if (!nzchar(label)) stop("label must be non-empty.", call. = FALSE)
@@ -626,6 +638,23 @@ bp_set_trait_baseline <- function(
     }
     baseline$mean <- c(baseline$mean, Index = baseline$index_mean)
     baseline$sd <- c(baseline$sd, Index = baseline$index_sd)
+  }
+  synthetic_defs <- bp_resolve_synthetic_traits(state, synthetic_traits)
+  if (length(synthetic_defs) > 0L) {
+    if (is.null(pop)) stop("Synthetic baselines require pop.", call. = FALSE)
+    for (def in synthetic_defs) {
+      syn_gv <- bp_get_synthetic_gv(
+        pop = pop,
+        synthetic_trait = def,
+        state = state,
+        varE = varE,
+        n_trials = synthetic_gv_n_trials,
+        n_plants_per_trial = synthetic_gv_n_plants,
+        seed = seed
+      )
+      baseline$mean[[def$name]] <- mean(syn_gv, na.rm = TRUE)
+      baseline$sd[[def$name]] <- stats::sd(syn_gv, na.rm = TRUE)
+    }
   }
   if (is.null(state$sim$trait_baselines)) state$sim$trait_baselines <- list()
   state$sim$trait_baselines[[label]] <- baseline
@@ -878,7 +907,7 @@ bp_cfg_render_node_items <- function(refs, fields, prefix = "", indent = 2L, val
 
 bp_cfg_add_trailing_comma <- function(lines) {
   if (length(lines) == 0L) return(lines)
-  idx <- tail(which(nzchar(trimws(lines)) & !grepl("^\\s*#", lines)), 1L)
+  idx <- utils::tail(which(nzchar(trimws(lines)) & !grepl("^\\s*#", lines)), 1L)
   if (length(idx) == 0L || grepl(",\\s*(#.*)?$", lines[[idx]])) return(lines)
   lines[[idx]] <- sub("(\\s*#.*)$", ",\\1", lines[[idx]])
   if (!grepl(",\\s*(#.*)?$", lines[[idx]])) {

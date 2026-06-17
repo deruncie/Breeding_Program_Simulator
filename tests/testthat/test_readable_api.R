@@ -220,7 +220,7 @@ test_that("predict_ebv_pop accepts multi-trait matrix output", {
   expect_equal(s@nInd, 3L)
 })
 
-test_that("bp_index utilities compute and select by weighted trait index", {
+test_that("synthetic traits replace weighted index EBV utilities", {
   testthat::skip_if_not_installed("AlphaSimR")
   library(AlphaSimR)
 
@@ -236,17 +236,22 @@ test_that("bp_index utilities compute and select by weighted trait index", {
   idx <- BreedingProgramSimulator:::bp_index_values(values, weights = w, traits = c("Trait1", "Trait2"))
   expect_equal(idx, drop(values %*% matrix(w, ncol = 1L)))
 
-  pop2 <- BreedingProgramSimulator:::bp_set_indexed_ebv(pop, values = values, weights = w, traits = c("Trait1", "Trait2"))
-  expect_equal(ncol(pop2@ebv), 3L)
-  expect_equal(colnames(pop2@ebv)[[3L]], "Index")
-  expect_equal(as.numeric(pop2@ebv[, "Index"]), idx)
-
-  sel <- BreedingProgramSimulator:::bp_select_by_index(
-    pop,
-    n_select = 5,
-    weights = w,
-    use = "gv",
+  index_def <- bp_synthetic_trait(
+    "Index",
     traits = 1:2,
+    fun = AlphaSimR::selIndex,
+    args = list(b = w),
+    linear = TRUE
+  )
+  pop2 <- bp_set_synthetic_values(pop, "Index", idx, type = "ebv")
+  expect_equal(ncol(pop2@ebv), 0L)
+  expect_equal(bp_get_stored_synthetic_values(pop2, "Index", type = "ebv"), idx)
+
+  sel <- bp_select_synthetic(
+    pop,
+    n_select = 5L,
+    synthetic_trait = index_def,
+    use = "gv",
     simParam = SP
   )
   manual_ids <- pop@id[order(idx, decreasing = TRUE)[seq_len(5)]]
