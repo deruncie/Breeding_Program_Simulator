@@ -67,3 +67,25 @@ Run the Shiny dashboard from repo root with:
 ```r
 shiny::runApp("examples/shiny_monitor_app")
 ```
+
+## Codex Skills
+
+BPS includes skills for drafting breeding schemes and designing experiments.
+Install them for your Codex user account with:
+
+```r
+BreedingProgramSimulator::bp_install_codex_skills()
+```
+
+To make the skills available only inside one project, run:
+
+```r
+BreedingProgramSimulator::bp_install_codex_skills(
+  scope = "project",
+  project = "/path/to/project"
+)
+```
+
+After upgrading BPS, pass `overwrite = TRUE` to install the skill versions
+bundled with the new package version. Codex normally detects skill changes
+automatically; restart Codex if they do not appear.

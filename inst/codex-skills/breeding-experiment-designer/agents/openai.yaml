@@ -1,0 +1,4 @@
+interface:
+  display_name: "Breeding Experiment Designer"
+  short_description: "Build BPS setup and experiment scripts."
+  default_prompt: "Use $breeding-experiment-designer to build BPS setup, experiment, and cfg files, then help me run a minimal smoke test."

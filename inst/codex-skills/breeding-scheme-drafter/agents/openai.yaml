@@ -1,0 +1,4 @@
+interface:
+  display_name: "Breeding Scheme Drafter"
+  short_description: "Draft and validate readable BPS schemes."
+  default_prompt: "Use $breeding-scheme-drafter to draft my BPS scheme, collect cfg requirements, and help me run a minimal smoke test."

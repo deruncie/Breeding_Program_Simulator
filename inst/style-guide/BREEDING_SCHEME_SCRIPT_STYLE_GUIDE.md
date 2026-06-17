@@ -1,121 +1,273 @@
 # Breeding Scheme Script Style Guide
 
-This guide defines the standard style for readable breeding-scheme scripts in this package.
+This guide defines scheme-script style for BreedingProgramSimulator (BPS) 0.2.0.
+The priorities are simplicity, readability, explicit configuration, and faithful
+cohort flow.
 
-## 1) Script Structure
+## Template-First Workflow
 
-Use this section order in each scheme script:
+Before writing a scheme, inspect the versioned templates installed under
+`templates/bps-0.2.0`. Copy the closest scheme when its biological flow and
+scheduler are substantially similar; then rename and remove what is not needed.
+Draft from scratch when no template fits. Do not force a user's design into a
+template merely to save code.
 
-1. `Setup` (libraries + `source()` calls)
-2. `Helper Utilities` (small pure helpers)
-3. `Event Verbs` (scheme actions)
-4. `Yearly Schedule` (or tick schedule)
-5. `Config` (all parameters)
-6. `Initialization` (founders + initial cohorts)
-7. `Runners` (fill loop + run loop)
-8. `Reporting` (summary and plots)
-9. `Script Entry` (guarded execution)
-
-Keep each section short and readable. Avoid hidden control flow.
-
-## 2) Event Verb Naming
-
-Write event functions as explicit action names that encode source + action, for example:
-
-- `select_from_PYT_and_run_AYT()`
-- `advance_F1_to_DH()`
-- `update_parents_and_cross_to_F1()`
-
-## 3) Event Verb Implementation Pattern
-
-Each event verb should follow this readable pattern:
-
-1. Pull input cohorts with `select_latest_available()` or `select_current()`.
-2. Handle missing input with:
+Locate the templates with:
 
 ```r
-chk <- bp_skip_if_no_input(state, input_obj, cfg)
+system.file("templates", "bps-0.2.0", package = "BreedingProgramSimulator")
+```
+
+Read `TEMPLATE_INDEX.md` in that directory for the selection rules.
+
+## 1) Purpose and File Boundary
+
+A scheme file is loaded with `source()`. Loading it defines its reporting
+function, event verbs, and `run_simulation()`; it does not initialize a
+population or start a simulation by itself.
+
+Keep these responsibilities outside the scheme file:
+
+- genetic architecture and founder creation
+- historical simulation and burn-in configuration
+- scenario and replicate grids
+- experiment comparisons
+- default parameter values
+
+Put those responsibilities in `Create_sim_bps.R`, `run_experiments.R`, and
+their cfg files.
+
+## 2) Scheme File Layout
+
+Use this section order:
+
+1. `Setup`: short scheme description, flow diagram, libraries, and essential
+   `source()` calls.
+2. `Helper Utilities`: only small helpers that remove genuine repetition.
+3. `Reporting`: one `record_yearly_outputs()` function.
+4. `Event Verbs`: visible biological and operational actions.
+5. `Runners`: one explicit `run_simulation()` scheduler.
+
+Do not add Config, Initialization, Script Entry, or demo-run sections to a
+scheme file. Keep the main scheduler readable from top to bottom.
+
+## 3) Configuration Is Explicit
+
+Use `cfg$...` for every quantity or choice that a user may vary, including:
+
+- stage sizes and selection intensities
+- durations and cycle lengths
+- trial traits, locations, reps, environmental variation, and costs
+- crossing, selfing, DH, and seed-increase settings
+- marker chips, training windows, models, and GP debug settings
+- reporting cadence
+
+Do not hide defaults inside scheme code with `%||%`, `if (is.null(...))`,
+or fallback literals. A missing required cfg parameter should fail at its use
+site.
+
+Use `bp_check_cfg_requirements()` outside the scheme to collect required
+parameters into a cfg file. Script-assigned derived fields may appear as
+`NULL` in that file with a comment explaining where they are assigned.
+
+Keep stage names, stream names intrinsic to the design, and event terminology
+in the scheme code. Put them in cfg only when the experiment is intended to
+vary them.
+
+Do not add user-error checks merely to replace ordinary R errors. Validate
+biological constraints only when an invalid combination would otherwise run
+silently or fail misleadingly.
+
+## 4) Prefer BPS and AlphaSimR
+
+Use BPS and AlphaSimR functions directly whenever they express the operation:
+
+- `select_latest_available()`
+- `bp_skip_if_no_input()`
+- `put_stage_pop()` and `bp_update_stage_pop()`
+- `run_phenotype_trial()`
+- `run_genotyping()`
+- `run_train_gp_model()` and `run_predict_ebv()`
+- `bp_select_synthetic()`
+- `add_stage_cost()`
+- `bp_advance_time_years()`
+- AlphaSimR crossing, selfing, DH, phenotype, and selection functions
+
+Avoid wrappers around one BPS or AlphaSimR call. Add a helper only when it
+makes repeated code materially clearer. Keep scheme logic in event verbs, not
+in callback layers or generic mini-frameworks.
+
+## 5) Event Verb Names
+
+Name functions for the action and its biological source/output. Follow the
+terminology in the user's description and diagram.
+
+Examples:
+
+- `release_variety_from_EYT()`
+- `select_from_AYT_and_start_EYT()`
+- `select_from_PYT_and_run_AYT()`
+- `advance_F1_to_headrow()`
+- `build_F1_from_Parents()`
+- `train_wfRGS_model()`
+- `run_wfRGS_cycle()`
+
+Use consistent stage capitalization within a scheme. Pass `state`, `cfg`,
+and `year` to scheduled verbs. Add `cycle` and `stream` only when the
+event needs them.
+
+## 6) Event Verb Pattern
+
+Write event verbs in this order:
+
+1. Select the required input cohort or cohorts.
+2. Skip when the pipeline has not produced input yet.
+3. Perform the visible AlphaSimR/BPS operation.
+4. Store or update output with complete provenance and logging metadata.
+5. Return the updated state.
+
+Use:
+
+```r
+input_pyt <- select_latest_available(
+  state = state,
+  stage = "PYT",
+  stream = "main",
+  n = 1L,
+  combine = TRUE,
+  silent = TRUE
+)
+chk <- bp_skip_if_no_input(
+  state = state,
+  input_obj = input_pyt,
+  cfg = cfg,
+  event_name = "select_from_PYT_and_run_AYT"
+)
 if (chk$skip) return(chk$state)
 ```
 
-3. Run explicit stage logic in ordinary R/AlphaSimR code. This may include:
-- direct crossing/selfing/subsetting code
-- `run_phenotype_trial(...)`
-- `run_genotyping(...)`
-- `run_train_gp_model(...)`
-- other wrapper/core API calls
+This skip handles an expected empty pipeline during warm-up. It is not a
+substitute for missing cfg parameters.
 
-4. Ensure output/state changes are recorded through core logging-capable verbs (for example `put_stage_pop()`, `add_stage_cost()`, and wrapper calls that already log).
-5. Close sources only when one-time consumption is intended.
+Use `source = input_bundle` or explicit `source_ids` for every output. Use
+`"UNKNOWN"` only when the true source cannot be represented. Supply accurate
+`selection_strategy`, `cross_strategy`, duration, stream, and cost metadata.
 
-Phenotyping events are one common instance of this pattern:
-- select entries
-- run trial
-- do next-stage advancement/selection in the following event verb
+## 7) Reporting
 
-Prefer explicit event code over callback-heavy generic wrappers.
-## 4) Time and Scheduling
+Define one `record_yearly_outputs(results, results_base, state, year, cfg)`.
 
-- Use `rapid_cycle_length` (years per tick) as primary time parameter.
-- Derive `ticks_per_year <- as.integer(round(1 / rapid_cycle_length))`.
-- Keep year-level schedule explicit, with optional inner tick loops when needed.
-- Separate warm-up (`fill`) years from measured (`run`) years in two loops.
+Build one readable result record containing:
 
-## 5) Input Selection Rules
+- year or cycle time
+- stage metrics from `bp_report_stage_metrics()`
+- biological-trait and synthetic-trait metrics separately when needed
+- crossing, line-development, seed-increase, phenotype, genotype, and total
+  costs that matter for the comparison
 
-Use `select_latest_available(..., n = k)` for normal stage chaining.
-
-Conventions:
-
-- `n = 1` (default): one latest cohort.
-- `n > 1`: combine selected cohorts when needed.
-- Always pass source cohort IDs to downstream logging via `source` or `source_ids`.
-
-If source IDs are unknown, use `"UNKNOWN"` instead of dropping provenance.
-
-## 6) Logging Requirements
-
-Log all stage outputs through core API verbs so the event timeline is complete.
-
-Minimum required metadata for readable logs:
-
-- source cohort IDs (`source_ids`, vector allowed)
-- `selection_strategy` text when selection is used
-- `cross_strategy` text when crossing is used
-- output stage and availability timing
-
-Missing-input behavior should log by default and can be made strict with config:
-
-- `cfg$log_missing_input = TRUE` (default)
-- `cfg$fail_on_missing_input = TRUE` for strict runs
-
-## 7) Naming and Readability
-
-- Use meaningful object names (`input_pyt`, `selected_ayt`, `next_cross_block`).
-- Keep event functions short enough to read top-to-bottom.
-- Keep stage/event names in event verbs (for example `"PI_CAND"`, `"PD_DH_INPUT"`, `"PYT"`), not in `cfg`.
-- Use `cfg` for numeric, timing, and model parameters.
-- Keep cfg values near use-sites when that improves clarity.
-- Do not expose internal state-table plumbing in high-level event code.
-
-## 8) Script Entry Guard
-
-Use this entry guard for all examples:
+Use stable names across schemes so experiment outputs can be row-bound.
+Request trait suffixes deliberately for multi-trait results. Return:
 
 ```r
-if (identical(environment(), globalenv()) && !identical(Sys.getenv("BPS_SKIP_SCRIPT_ENTRY"), "1")) {
-  # demo run
-}
+bind_rows(results, data.frame(results_base, results_year))
 ```
 
-This keeps scripts runnable interactively while allowing safe `source()` in tests.
+Do not duplicate BPS reporting logic in scheme-local helpers unless BPS cannot
+express the required metric.
 
-## 9) Validation Checklist
+## 8) Scheduler Organization
 
-Before finalizing a scheme script:
+Keep the complete logical schedule visible inside `run_simulation()`.
 
-1. Run with short fill/run years and confirm no runtime errors.
-2. Check event log chronology and source/output links.
-3. Confirm stage availability timing matches intent.
-4. Confirm costs are not double-counted.
-5. Confirm genotyping availability matches chip/model assumptions.
+For annual line-development pipelines, order same-time events from downstream
+to upstream: release completed material, update/select later trials, advance
+earlier stages, then create the newest cohort. Advance time only after all
+events at that time have run.
+
+For rapid cycles, keep the outer annual or phase structure visible and use a
+small inner cycle loop. Advance BPS time by the cfg-controlled cycle duration
+at the point the biological material becomes available.
+
+Record the initial state when useful, then report at consistent year/cycle
+boundaries. Use one comparison origin via `start_year`.
+
+Do not put burn-in loops in the scheme. `Create_sim_bps.R` calls the same
+`run_simulation()` with a burn-in cfg.
+
+## 9) Multiple Streams
+
+Represent parallel pipelines with BPS `stream` values, not separate state
+objects.
+
+- Pass `stream` explicitly to stream-specific event verbs.
+- Loop over streams in the scheduler when the same event applies to each.
+- Keep stream-specific cohorts in their own streams.
+- When streams merge, select one input bundle per stream and pass all source
+  IDs to the merged output.
+- Give merged outputs a deliberate stream name.
+- Report stream-specific metrics separately and include stream identity when
+  it is not fixed by the scheme.
+
+Keep simple stream-name construction visible. Do not copy the old continuous
+wfRGS script's unrelated helpers or hidden defaults.
+
+## 10) Genomic Prediction and Debug Runs
+
+A GP scheme must expose:
+
+```r
+cfg$debug_GP
+cfg$debug_GP_n
+```
+
+When `cfg$debug_GP` is true, fit the same model pathway on the smallest valid
+subset, capped by `cfg$debug_GP_n`. Continue through model storage,
+prediction, selection, and downstream events. Do not replace GP with random
+scores: the smoke test must verify the real training/prediction integration.
+
+Production behavior must use the full cfg-defined training population.
+Neither debug value may have a hidden default in the scheme.
+
+## 11) Minimal Smoke Tests
+
+Before a scheme is considered working, propose and help the user run a tiny
+cfg that exercises every event path.
+
+Use approximately:
+
+- 2 chromosomes
+- a few QTL and markers per chromosome
+- the smallest founder and parent populations valid for the crossing design
+- small stage populations, while keeping candidate counts larger than selected
+  counts so selection actually occurs
+- one or very few locations and reps where valid
+- only enough years/cycles to reach the final stage, train/predict any GP
+  model, and exercise recycling or stream merging
+
+Derive exact sizes from the scheme's operations. Check requirements such as
+parent pairs, cross-plan dimensions, training sample size, and requested
+selection counts. Small must still be biologically and computationally valid.
+
+For GP smoke tests, set `cfg$debug_GP = TRUE` and choose the smallest
+`cfg$debug_GP_n` that allows the selected model to fit.
+
+Inspect runtime, event timeline, stage availability, source links, selection,
+costs, genotyping/model state, results columns, and multi-stream convergence.
+After the smoke test passes, restore the user's production cfg; never let test
+values become hidden production defaults.
+
+## 12) Validation
+
+Validate in this order:
+
+1. Source the scheme without running it.
+2. Run `bp_check_cfg_requirements()` with the relevant orchestration file.
+3. Run the minimal smoke test.
+4. Check event chronology, source/output links, durations, and streams.
+5. Check selection counts and recycling logic.
+6. Check costs for omissions or double counting.
+7. Check genotyping, GP training/prediction, and synthetic-trait behavior.
+8. Check reporting names and result row binding.
+9. Compare the network with the user's diagram when requested.
+
+Report concrete mismatches by function, stage, stream, and time.
