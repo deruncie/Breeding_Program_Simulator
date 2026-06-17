@@ -12,7 +12,6 @@ Imports:
     methods
 Suggests:
     testthat (>= 3.0.0),
-    shiny,
     ggplot2,
     AlphaSimR,
     dplyr,

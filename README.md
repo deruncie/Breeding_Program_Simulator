@@ -56,18 +56,6 @@ state <- bp_register_synthetic_traits(state, index)
 Use `bp_select_synthetic()` for selection and
 `bp_report_stage_metrics()` for consistently named one-row result fields.
 
-## Examples
-
-- `examples/simple_readable_cycle.R`
-- `examples/AdvanceYear_GSTP_readable_structured.R`
-- `examples/shiny_monitor_app/app.R`
-
-Run the Shiny dashboard from repo root with:
-
-```r
-shiny::runApp("examples/shiny_monitor_app")
-```
-
 ## Codex Skills
 
 BPS includes skills for drafting breeding schemes and designing experiments.
@@ -76,6 +64,16 @@ Install them for your Codex user account with:
 ```r
 BreedingProgramSimulator::bp_install_codex_skills()
 ```
+
+The standard workflow is:
+
+1. Use `$breeding-scheme-drafter` to draft or refactor one or more sourceable
+   scheme scripts from descriptions and diagrams, collect their cfg
+   requirements, and run small validation cases.
+2. Once the schemes are working, use `$breeding-experiment-designer` to build
+   `Create_sim_bps.R`, `run_experiments.R`, the burn-in and experiment cfg
+   files, calibration steps, and a minimal end-to-end test around those
+   schemes.
 
 To make the skills available only inside one project, run:
 
