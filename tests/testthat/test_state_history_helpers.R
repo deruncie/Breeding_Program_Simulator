@@ -125,6 +125,37 @@ test_that("bp_update_stage_pop validates ids and can reorder", {
   expect_equal(state$pops[[cid]]$v, c(10, 20, 30))
 })
 
+test_that("bp_set_misc_values stores aligned data used by AlphaSimR selection", {
+  skip_if_not_installed("AlphaSimR")
+  founder_haps <- AlphaSimR::quickHaplo(nInd = 6L, nChr = 1L, segSites = 10L)
+  SP <- AlphaSimR::SimParam$new(founder_haps)
+  SP$addTraitA(nQtlPerChr = 2L)
+  pop <- AlphaSimR::newPop(founder_haps, simParam = SP)
+
+  pop <- bp_set_misc_values(pop, "progeny_mean", seq_len(pop@nInd))
+  selected <- AlphaSimR::selectInd(
+    pop,
+    nInd = 2L,
+    use = function(pop, trait = NULL) pop@misc[["progeny_mean"]],
+    simParam = SP
+  )
+
+  expect_equal(selected@misc$progeny_mean, c(6L, 5L))
+  expect_equal(selected@id, pop@id[c(6L, 5L)])
+
+  scores <- cbind(first = seq_len(pop@nInd), second = 11:16)
+  pop <- bp_set_misc_values(pop, "scores", scores)
+  expect_equal(pop[c(4L, 2L)]@misc$scores, scores[c(4L, 2L), , drop = FALSE])
+  expect_error(
+    bp_set_misc_values(pop, "bad", 1:2),
+    "one value or row per individual"
+  )
+  expect_error(
+    bp_set_misc_values(pop, "bps_synthetic_gv", seq_len(pop@nInd)),
+    "reserved for package-managed fields"
+  )
+})
+
 test_that("bp_set_trait_baseline stores supplied values", {
   state <- BreedingProgramSimulator:::bp_init_state(SP = NULL, dt = 1, start_time = 0)
   state <- BreedingProgramSimulator:::bp_set_trait_baseline(

@@ -11,9 +11,9 @@ bp_install_codex_skills(
 )
 }
 \arguments{
-\item{scope}{Install for the current \code{"user"} or one \code{"project"}.}
+\item{scope}{Install for the current `"user"` or one `"project"`.}
 
-\item{project}{Project root used when \code{scope = "project"}. By default, use
+\item{project}{Project root used when `scope = "project"`. By default, use
 the current working directory.}
 
 \item{overwrite}{Replace existing BPS skill directories.}

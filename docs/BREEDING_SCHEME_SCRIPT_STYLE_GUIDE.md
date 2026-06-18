@@ -85,7 +85,9 @@ Use BPS and AlphaSimR functions directly whenever they express the operation:
 - `select_latest_available()`
 - `bp_skip_if_no_input()`
 - `put_stage_pop()` and `bp_update_stage_pop()`
+- `bp_set_misc_values()`
 - `run_phenotype_trial()`
+- `run_progeny_test()`
 - `run_genotyping()`
 - `run_train_gp_model()` and `run_predict_ebv()`
 - `bp_select_synthetic()`
@@ -97,7 +99,48 @@ Avoid wrappers around one BPS or AlphaSimR call. Add a helper only when it
 makes repeated code materially clearer. Keep scheme logic in event verbs, not
 in callback layers or generic mini-frameworks.
 
-## 5) Event Verb Names
+## 5) Temporary Populations and Auxiliary Individual Data
+
+Store a population in `state` only when its individuals remain available to a
+later stage or must be retained as a cohort. A population created only to
+collect data can remain temporary: generate it, measure it, summarize its data
+onto the retained population, and discard it without calling `put_stage_pop()`.
+
+A progeny test is the standard example. The progeny are grown and phenotyped
+only to evaluate the original candidates. Keep the candidates, attach the
+family summaries to them, and discard the progeny. Prefer
+`run_progeny_test()`, which performs this workflow without storing the progeny
+as cohorts.
+
+Store per-individual quantities that are not biological phenotypes, genetic
+values, or EBVs as clearly named entries in `pop@misc`. Use:
+
+```r
+pop <- bp_set_misc_values(pop, "progeny_mean", progeny_mean)
+```
+
+Names beginning with `bps_` are reserved for BPS-managed fields, including
+synthetic-trait storage.
+
+The values must follow the current individual order. AlphaSimR then carries
+them through population subsetting and selection. Select directly on a stored
+quantity when appropriate:
+
+```r
+selected <- AlphaSimR::selectInd(
+  pop,
+  nInd = cfg$n_select,
+  use = function(pop, trait = NULL) pop@misc[["progeny_mean"]],
+  simParam = state$sim$SP
+)
+```
+
+If `pop` is already stored in `state`, attach the data and then replace the
+stored copy with `bp_update_stage_pop()`. For a new cohort, attach the data
+before `put_stage_pop()`. Do not use `bp_update_stage_pop()` merely to edit a
+local population.
+
+## 6) Event Verb Names
 
 Name functions for the action and its biological source/output. Follow the
 terminology in the user's description and diagram.
@@ -116,7 +159,7 @@ Use consistent stage capitalization within a scheme. Pass `state`, `cfg`,
 and `year` to scheduled verbs. Add `cycle` and `stream` only when the
 event needs them.
 
-## 6) Event Verb Pattern
+## 7) Event Verb Pattern
 
 Write event verbs in this order:
 
@@ -153,7 +196,7 @@ Use `source = input_bundle` or explicit `source_ids` for every output. Use
 `"UNKNOWN"` only when the true source cannot be represented. Supply accurate
 `selection_strategy`, `cross_strategy`, duration, stream, and cost metadata.
 
-## 7) Reporting
+## 8) Reporting
 
 Define one `record_yearly_outputs(results, results_base, state, year, cfg)`.
 
@@ -175,7 +218,7 @@ bind_rows(results, data.frame(results_base, results_year))
 Do not duplicate BPS reporting logic in scheme-local helpers unless BPS cannot
 express the required metric.
 
-## 8) Scheduler Organization
+## 9) Scheduler Organization
 
 Keep the complete logical schedule visible inside `run_simulation()`.
 
@@ -194,7 +237,7 @@ boundaries. Use one comparison origin via `start_year`.
 Do not put burn-in loops in the scheme. `Create_sim_bps.R` calls the same
 `run_simulation()` with a burn-in cfg.
 
-## 9) Multiple Streams
+## 10) Multiple Streams
 
 Represent parallel pipelines with BPS `stream` values, not separate state
 objects.
@@ -211,7 +254,7 @@ objects.
 Keep simple stream-name construction visible. Do not copy the old continuous
 wfRGS script's unrelated helpers or hidden defaults.
 
-## 10) Genomic Prediction and Debug Runs
+## 11) Genomic Prediction and Debug Runs
 
 A GP scheme must expose:
 
@@ -228,7 +271,7 @@ scores: the smoke test must verify the real training/prediction integration.
 Production behavior must use the full cfg-defined training population.
 Neither debug value may have a hidden default in the scheme.
 
-## 11) Minimal Smoke Tests
+## 12) Minimal Smoke Tests
 
 Before a scheme is considered working, propose and help the user run a tiny
 cfg that exercises every event path.
@@ -256,7 +299,7 @@ costs, genotyping/model state, results columns, and multi-stream convergence.
 After the smoke test passes, restore the user's production cfg; never let test
 values become hidden production defaults.
 
-## 12) Validation
+## 13) Validation
 
 Validate in this order:
 

@@ -416,6 +416,42 @@ bp_pop_ids <- function(pop) {
   as.character(seq_len(pop_n_ind(pop)))
 }
 
+#' Store Individual-Level Auxiliary Data on a Population
+#'
+#' Add or replace a named `misc` field containing one value, row, or list
+#' element per individual. AlphaSimR carries these values with individuals when
+#' a population is subset or selected.
+#'
+#' @param pop AlphaSimR `Pop` object.
+#' @param name Name used in `pop@misc`. Names beginning with `bps_` are
+#'   reserved for package-managed fields.
+#' @param values Atomic vector, factor, list, or matrix aligned with the
+#'   individuals in `pop`. Matrices must have one row per individual; other
+#'   objects must have one element per individual.
+#'
+#' @return Updated population.
+#' @export
+bp_set_misc_values <- function(pop, name, values) {
+  if (!methods::is(pop, "Pop")) {
+    stop("pop must be an AlphaSimR Pop object.", call. = FALSE)
+  }
+  name <- as.character(name)
+  if (length(name) != 1L || is.na(name) || !nzchar(name)) {
+    stop("name must be a single non-empty character value.", call. = FALSE)
+  }
+  if (startsWith(name, "bps_")) {
+    stop("Names beginning with 'bps_' are reserved for package-managed fields.", call. = FALSE)
+  }
+
+  n_values <- if (is.matrix(values)) nrow(values) else length(values)
+  if (n_values != pop_n_ind(pop)) {
+    stop("values must contain one value or row per individual.", call. = FALSE)
+  }
+
+  pop@misc[[name]] <- values
+  pop
+}
+
 #' Update an Existing Stage Population
 #'
 #' Safely replace a stored population object after validating population size and

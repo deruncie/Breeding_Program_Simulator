@@ -12,6 +12,8 @@ Use this checklist during Step 5.
 
 - Crossing counts and parent-block counts match spec
 - Advancement counts by stage match spec
+- Data-only temporary populations are summarized and discarded
+- Auxiliary selection data stay aligned in named `pop@misc` fields
 - Recycling logic matches spec
 - Variety release rule matches spec
 
