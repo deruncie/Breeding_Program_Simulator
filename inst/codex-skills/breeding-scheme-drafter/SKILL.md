@@ -1,6 +1,6 @@
 ---
 name: breeding-scheme-drafter
-description: "Design, draft, or refactor readable BPS breeding-scheme R scripts from diagrams, protocols, and breeder descriptions. For genuinely new schemes, default to a patient stage-by-stage conversation that uncovers terminology, tacit breeding decisions, trait needs, and stored versus temporary populations before any code; then require approval of the interpretation, skeleton, and event plans. Use for new or extended single-trait, multi-trait, genomic-selection, or multi-stream breeding schemes and their minimal smoke tests."
+description: "Design, draft, or refactor readable BPS breeding-scheme R scripts from diagrams, protocols, and breeder descriptions. For genuinely new schemes, default to a patient stage-by-stage conversation that uncovers terminology, tacit breeding decisions, trait needs, and stored versus temporary populations before any code; then require approval of the interpretation, skeleton, and event plans. Support a design-only mode that requires no R installation and defers implementation and validation. Use for new or extended single-trait, multi-trait, genomic-selection, or multi-stream breeding schemes and their minimal smoke tests."
 ---
 
 # Breeding Scheme Drafter
@@ -25,6 +25,11 @@ system.file("templates", "bps-0.2.0", package = "BreedingProgramSimulator")
 If that returns an empty path in a source checkout, find
 `inst/templates/bps-0.2.0` in the BPS repository.
 
+When R is unavailable in design-only mode, look for the source-checkout path
+directly. If neither installed nor source templates are available, continue
+through discovery and the skeleton without them and disclose that limitation
+before giving implementation plans.
+
 ## Classify the Request
 
 Treat a scheme as an **extension** only when the user supplies a working scheme
@@ -32,6 +37,32 @@ and requests bounded changes that leave most stages and the scheduler intact.
 A packaged template, a familiar crop, or a diagram resembling an old scheme
 does not make the request an extension. When uncertain, use the new-scheme
 workflow.
+
+## Design-Only Mode
+
+Use design-only mode when the user requests drafting, planning, workshop use,
+or explicitly defers coding or validation. An R installation is not required
+and its absence is not a blocker.
+
+In this mode:
+
+- do not install R or packages, run R commands, source scripts, scan cfg files,
+  implement event bodies, or perform smoke tests or runtime validation
+- conduct the full stage-by-stage discovery and obtain Gate 1 approval
+- continue through only the gates the user requests; by default, prepare and
+  review the Gate 2 skeleton and Gate 3 implementation plans, then stop
+- make the Gate 2 artifact pseudocode or an unmistakably non-executable R
+  skeleton according to the user's preference
+- use the bundled style guide and discovery guide for Gates 1 and 2
+- for Gate 3, inspect only relevant package templates, documentation, or source
+  when they are available as ordinary files; do not ingest the whole package
+  indiscriminately
+- distinguish verified BPS operations from proposed operations that must be
+  checked during a later implementation session
+
+Finish with a handoff containing the approved stage map, persistent and
+temporary populations, trait map, event/scheduler skeleton, event plans,
+unresolved questions, and the deferred implementation and validation work.
 
 ## Genuinely New Schemes: Conversation First
 
