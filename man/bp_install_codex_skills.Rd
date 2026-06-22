@@ -26,3 +26,8 @@ Install the Codex skills bundled with BPS for the current user or for one
 project. The installed skills remain tied to the version shipped with the
 installed BPS package.
 }
+\details{
+After installation, restart Codex and open a new thread before invoking the
+skills. A thread that was already open may retain the skill list with which
+it started.
+}

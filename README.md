@@ -65,6 +65,12 @@ Install them for your Codex user account with:
 BreedingProgramSimulator::bp_install_codex_skills()
 ```
 
+The installer prints the directory and installed skill names. When it
+finishes, restart Codex (or reload the IDE extension) and open a new thread.
+Threads that were already open when the skills were installed may retain their
+original skill list. In the new thread, invoke a skill explicitly with
+`$breeding-scheme-drafter` or `$breeding-experiment-designer`.
+
 The standard workflow is:
 
 1. Use `$breeding-scheme-drafter` to draft or refactor one or more sourceable
@@ -85,5 +91,4 @@ BreedingProgramSimulator::bp_install_codex_skills(
 ```
 
 After upgrading BPS, pass `overwrite = TRUE` to install the skill versions
-bundled with the new package version. Codex normally detects skill changes
-automatically; restart Codex if they do not appear.
+bundled with the new package version, then restart Codex and open a new thread.

@@ -4,6 +4,23 @@ This guide defines scheme-script style for BreedingProgramSimulator (BPS) 0.2.0.
 The priorities are simplicity, readability, explicit configuration, and faithful
 cohort flow.
 
+## Contents
+
+- [Template-First Workflow](#template-first-workflow)
+- [1. Purpose and File Boundary](#1-purpose-and-file-boundary)
+- [2. Scheme File Layout](#2-scheme-file-layout)
+- [3. Configuration Is Explicit](#3-configuration-is-explicit)
+- [4. Prefer BPS and AlphaSimR](#4-prefer-bps-and-alphasimr)
+- [5. Temporary Populations and Auxiliary Data](#5-temporary-populations-and-auxiliary-individual-data)
+- [6. Event Verb Names](#6-event-verb-names)
+- [7. Event Verb Pattern](#7-event-verb-pattern)
+- [8. Reporting](#8-reporting)
+- [9. Scheduler Organization](#9-scheduler-organization)
+- [10. Multiple Streams](#10-multiple-streams)
+- [11. Genomic Prediction and Debug Runs](#11-genomic-prediction-and-debug-runs)
+- [12. Minimal Smoke Tests](#12-minimal-smoke-tests)
+- [13. Validation](#13-validation)
+
 ## Template-First Workflow
 
 Before writing a scheme, inspect the versioned templates installed under
@@ -99,6 +116,10 @@ Avoid wrappers around one BPS or AlphaSimR call. Add a helper only when it
 makes repeated code materially clearer. Keep scheme logic in event verbs, not
 in callback layers or generic mini-frameworks.
 
+This restriction applies to helper utilities, not to meaningful event verbs.
+An event verb may have one principal BPS call when it also makes the input
+choice, biological decision, timing, provenance, and scheduler position clear.
+
 ## 5) Temporary Populations and Auxiliary Individual Data
 
 Store a population in `state` only when its individuals remain available to a
@@ -160,6 +181,57 @@ and `year` to scheduled verbs. Add `cycle` and `stream` only when the
 event needs them.
 
 ## 7) Event Verb Pattern
+
+### Choosing Event Boundaries
+
+An event verb represents one planned transition from currently available stored
+inputs to the next meaningful stored output. It may represent a process with
+duration: the scheduler invokes it once, and BPS records when its output becomes
+available.
+
+Identify persistent populations before defining event verbs. Store a population
+when it contains independently available results or material needed for later
+selection, reporting, GP training, branching, or reuse. Then minimize stored
+populations between those boundaries by keeping one-use intermediates local to
+the event. See Section 5 for temporary data-only populations.
+
+In the examples below, PYT, AYT, and EYT are illustrative names for sequential
+field-trial stages—often preliminary, advanced, and elite yield trials. They are
+not BPS keywords; use and clarify the breeding program's own terminology.
+
+A trial event combines planning and execution. Planning selects entries from
+the preceding trial results and defines the trial size and design. Execution
+runs the trial and produces results after its cfg-defined duration:
+
+```text
+stored PYT results
+-> temporary selection of AYT entries
+-> run AYT
+-> stored AYT results
+```
+
+This leads to verbs such as `select_from_PYT_and_run_AYT()` and
+`select_from_AYT_and_run_EYT()`. Do not store `AYT_selected` unless it has an
+independent lifecycle; pass it directly into `run_phenotype_trial()`, which
+creates the stored AYT cohort. This avoids storing the same lines first as
+selected seed and again as a phenotyped trial population, or modifying a
+stored cohort's population and availability.
+
+Do not combine PYT, AYT, and EYT into one event. Each completed trial is a
+decision and data-availability boundary: AYT cannot be planned until PYT
+results are available, and EYT cannot be planned until AYT results are
+available. Obtain selection inputs through availability-aware BPS functions.
+
+Several consecutive operations may share one event when they can all be
+planned at once, no decisions or branching occur between them, intermediate
+populations are not used elsewhere, and the final output's availability can be
+calculated. Single-seed descent is a typical example. Simulate every required
+generation, but keep intermediate populations temporary and store only the
+final generation.
+
+Split actions when an intermediate population drives a decision, branches or
+feeds another event, contributes data needed for reporting or training, or
+must become independently available.
 
 Write event verbs in this order:
 
@@ -311,6 +383,7 @@ Validate in this order:
 6. Check costs for omissions or double counting.
 7. Check genotyping, GP training/prediction, and synthetic-trait behavior.
 8. Check reporting names and result row binding.
-9. Compare the network with the user's diagram when requested.
+9. Compare the event flow and scheduler with the user's diagram or protocol
+   when supplied.
 
 Report concrete mismatches by function, stage, stream, and time.

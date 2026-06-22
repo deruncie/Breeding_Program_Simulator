@@ -1,6 +1,6 @@
 ---
 name: breeding-scheme-drafter
-description: "Draft or refactor readable BPS breeding-scheme R scripts from diagrams, protocols, and user descriptions; identify missing specifications; validate timing, cohort flow, streams, reporting, costs, and genomic prediction; and help run minimal smoke tests before packaging. For completely new schemes, use staged clarification, skeleton, and implementation-plan review gates before coding. Use for new or revised single-trait, multi-trait, genomic-selection, or multi-stream breeding schemes."
+description: "Design, draft, or refactor readable BPS breeding-scheme R scripts from diagrams, protocols, and breeder descriptions. For genuinely new schemes, default to a patient stage-by-stage conversation that uncovers terminology, tacit breeding decisions, trait needs, and stored versus temporary populations before any code; then require approval of the interpretation, skeleton, and event plans. Use for new or extended single-trait, multi-trait, genomic-selection, or multi-stream breeding schemes and their minimal smoke tests."
 ---
 
 # Breeding Scheme Drafter
@@ -10,6 +10,9 @@ description: "Draft or refactor readable BPS breeding-scheme R scripts from diag
 Read `references/script-style-guide.md` completely. It is the source of truth
 for BPS 0.2.0 scheme structure, cfg rules, templates, event verbs, reporting,
 schedulers, streams, GP debugging, and smoke tests.
+
+For a genuinely new scheme, read `references/discovery-guide.md` before asking
+design questions.
 
 Read `references/checklist.md` when validating a draft or completed scheme.
 
@@ -22,96 +25,84 @@ system.file("templates", "bps-0.2.0", package = "BreedingProgramSimulator")
 If that returns an empty path in a source checkout, find
 `inst/templates/bps-0.2.0` in the BPS repository.
 
-## Completely New Schemes: Required Design Gates
+## Classify the Request
 
-Move slowly and keep the user in the design loop. Do not begin the full
-implementation merely because a template looks close.
+Treat a scheme as an **extension** only when the user supplies a working scheme
+and requests bounded changes that leave most stages and the scheduler intact.
+A packaged template, a familiar crop, or a diagram resembling an old scheme
+does not make the request an extension. When uncertain, use the new-scheme
+workflow.
 
-### 1. Understand the Intended Scheme
+## Genuinely New Schemes: Conversation First
 
-Have a focused conversation before writing implementation code. Ask short
-rounds of clarification questions about unfamiliar terms and unresolved
-biology. Establish:
+Do not write R code, a skeleton, or detailed implementation plans at the start.
+Move through the scheme stage by stage in short conversational rounds, using
+the discovery guide. Adapt terminology and question depth to the user's
+experience; explain BPS concepts rather than expecting a new user to know them.
 
-- the meaning and purpose of every stage, stream, and named operation
-- material entering and leaving each event, including temporary data-only
-  populations
-- timing, overlap, selection, crossing, recycling, and stopping rules
-- phenotype, genotype, GP training, auxiliary-data, cost, and reporting needs
-- what is fixed scheme logic versus experiment-controlled cfg
+For every stage, understand its purpose, inputs, activities, decisions, timing,
+data, and outputs. Ask what must persist in `state` and what can remain a
+temporary population inside one event. Actively uncover operations breeders may
+take for granted, especially parent choice and crossing design, seed increase,
+trial entry decisions, advancement rules, recycling, and the timing of data
+availability.
 
-Restate the scheme in the user's terminology and maintain a visible list of
-assumptions and unresolved points. Look deliberately for unnecessary stages,
-stored cohorts, helper layers, duplicated operations, and stream complexity.
-Suggest simpler alternatives, but do not simplify away biological intent.
+When many traits are requested, determine how each trait changes selection,
+timing, or reporting. Suggest a smaller set of representative biological traits,
+stage-specific measurements, or synthetic indices when that preserves the
+scientific intent. Never simplify traits or biology without user approval.
 
-Proceed only when the user confirms the restatement and no material ambiguity
-remains about flow, timing, selection, or data use.
+Look for unnecessary stored cohorts, stages, streams, helper layers, and
+duplicated operations. Suggest simpler BPS representations while preserving the
+breeder's intent.
 
-### 2. Agree on Event Verbs and Scheduler
+### Gate 1: Confirm the Interpretation
 
-Create a skeleton scheme script before implementing events. Include the normal
-file sections, proposed event-verb names and signatures, and the complete
-`run_simulation()` scheduler. For each event stub, write a two- or
-three-sentence comment describing its inputs, biological action, retained or
-discarded material, and output. Leave the event unimplemented and make that
-status unmistakable.
+Provide a stage-by-stage map, terminology notes, stored-versus-temporary
+population decisions, trait/measurement map, and unresolved assumptions. Keep
+discussing until the user confirms the interpretation and no material ambiguity
+remains about biological flow, timing, selection, crossing, or data use.
 
-Write the scheduler in full enough to show event order, loops, conditions,
-streams, time advances, and reporting points. Ask the user to review the
-skeleton line by line and confirm or correct the verbs and schedule. Do not
-advance to implementation planning until the user approves this flow contract.
+After Gate 1, inspect `TEMPLATE_INDEX.md` and the closest relevant templates.
+Use them to inform the outline, but do not let them override the agreed design.
 
-### 3. Agree on Each Event's Implementation Plan
+### Gate 2: Confirm Event Verbs and Scheduler
 
-Add an implementation plan to every event stub. Explain:
+Create a skeleton scheme script with the normal sections, proposed event-verb
+signatures, and complete `run_simulation()` scheduler. Each event stub should
+contain a short comment describing its available inputs, decisions, temporary
+populations, stored output, and duration; leave it unmistakably unimplemented.
+Show event order, loops, conditions, streams, time advances, and reporting
+points. Ask the user to review and approve this flow contract.
 
-- the principal AlphaSimR and BPS calls
-- input-cohort selection and output provenance
-- selection criteria and temporary versus stored populations
-- phenotypes, genotypes, models, and `pop@misc` data created or updated
-- cfg parameters, durations, costs, logging, and reporting consequences
-- any additional calculations or bookkeeping not covered by BPS
+### Gate 3: Confirm Event Implementation Plans
 
-Call out uncertainty and opportunities to remove unnecessary custom code.
-Ask the user to review and approve these plans. Do not implement the event
-bodies until this second approval.
+For every event, explain the principal AlphaSimR and BPS calls, input selection,
+provenance, temporary and stored populations, cfg fields, phenotypes,
+genotypes, models, costs, logging, reporting, and any custom calculations. Call
+out uncertainty and opportunities to remove custom code. Do not implement event
+bodies until the user approves these plans.
 
-### 4. Implement and Validate
+## Extensions of Existing Schemes
 
-Implement the approved skeleton incrementally. If implementation reveals a
-new biological choice or changes the agreed flow, pause and return to the
-appropriate review gate instead of silently deciding.
+For a bounded extension, inspect the supplied scheme and describe the proposed
+changes to stages, event verbs, scheduler, cfg, and reporting. Ask only the
+questions needed to resolve changed or ambiguous behavior. After the user
+confirms this outline, implement directly unless the extension introduces a new
+biological decision; if it does, use the relevant new-scheme gate.
 
-## Implementation Workflow
+## Implement and Validate
 
-For a new scheme, begin this workflow only after both design gates above are
-approved. For a focused refactor of an understood scheme, summarize any flow
-impact and use this workflow directly unless the requested change introduces
-new biological ambiguity.
+Implement the approved design incrementally. Keep minimal helpers, one reporting
+function, visible event verbs, and one explicit scheduler. Run
+`bp_check_cfg_requirements()`, organize cfg fields, propose and run the minimal
+valid smoke test, and validate timing, provenance, populations, streams,
+selection, crossing, costs, GP, reporting, and agreement with any supplied
+diagram or protocol.
 
-1. Read the diagram, protocol, existing scripts, and cfg/experiment files.
-2. Read `TEMPLATE_INDEX.md`; copy the closest scheme only when its biological
-   flow and scheduler genuinely match. Otherwise draft from scratch.
-3. Keep the source-loaded scheme simple: minimal setup/helpers, one reporting
-   function, visible event verbs, and one explicit scheduler.
-4. Run `bp_check_cfg_requirements()` with the calling orchestration file and
-   organize the cfg into readable blocks.
-5. Propose and help run the style guide's minimal valid smoke test. Iterate
-   after each substantial correction.
-6. Validate runtime, flow, timing, provenance, streams, selection/recycling,
-   costs/trials, GP, reporting, and diagram/network agreement when requested.
+If coding exposes a new biological choice or changes the approved flow, pause
+and return to the relevant gate. Replace long planning notes in the final scheme
+with only the concise comments needed to understand the implemented code.
 
-## Agreement Gate
-
-For a new scheme, record separate user approval of the flow skeleton and event
-implementation plans. Before grid packaging or final status, also confirm
-flow, timing, selection, recycling, streams, open questions, and a passing
-smoke test. Only then add experiment integration.
-
-## Deliverables
-
-For a new scheme, provide the terminology/assumption record, reviewed skeleton,
-reviewed event plans, implemented scheme, cfg requirements, smoke-test cfg and
-command, validation summary/timeline, agreement status, and any post-agreement
-experiment packaging.
+Before experiment integration, record the three approvals for a new scheme and
+confirm that the smoke test passes with no unresolved design questions.

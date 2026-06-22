@@ -4,6 +4,11 @@
 #' project. The installed skills remain tied to the version shipped with the
 #' installed BPS package.
 #'
+#' @details
+#' After installation, restart Codex and open a new thread before invoking the
+#' skills. A thread that was already open may retain the skill list with which
+#' it started.
+#'
 #' @param scope Install for the current `"user"` or one `"project"`.
 #' @param project Project root used when `scope = "project"`. By default, use
 #'   the current working directory.
@@ -75,11 +80,19 @@ bp_install_codex_skills <- function(
     package_version <- as.character(
       utils::packageVersion("BreedingProgramSimulator")
     )
+    skill_prompts <- paste0("  $", basename(source_dirs), collapse = "\n")
     message(
       sprintf(
-        "Installed BPS %s Codex skills in %s",
+        paste0(
+          "Installed BPS %s Codex skills in %s\n\n",
+          "Next steps:\n",
+          "1. Restart Codex (or reload the IDE extension).\n",
+          "2. Open a new thread; an already-open thread may keep its original skill list.\n",
+          "3. Invoke either skill by name:\n%s"
+        ),
         package_version,
-        destination_root
+        destination_root,
+        skill_prompts
       )
     )
   }

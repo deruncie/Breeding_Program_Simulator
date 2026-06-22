@@ -1,6 +1,15 @@
 # Validation Checklist
 
-Use this checklist during Step 5.
+Use this checklist during validation.
+
+## Design Agreement
+
+- Stage terminology and breeder-specific meanings are documented
+- Parent choice, crossing, selection, advancement, and recycling rules are explicit
+- Stored populations coincide with meaningful reuse, decision, or data boundaries
+- One-use intermediate populations remain temporary
+- Trait abstractions preserve measurement timing and scientific intent
+- Event verbs and scheduler match the approved diagram or protocol
 
 ## Runtime
 
@@ -22,9 +31,3 @@ Use this checklist during Step 5.
 - Verbose logs show expected cadence
 - No impossible transitions appear
 - Empty/idle ticks are expected where schedule calls for them
-
-## Network (if enabled)
-
-- Extracted topology matches input diagram
-- Method A vs Method B mismatches explained
-- Remaining mismatches are documented as intentional or to-fix

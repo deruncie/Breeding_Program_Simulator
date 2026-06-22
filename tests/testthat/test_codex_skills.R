@@ -25,7 +25,7 @@ test_that("Codex skills install at project scope", {
       scope = "project",
       project = project
     ),
-    "Installed BPS"
+    "Restart Codex"
   )
 
   expect_length(installed, 2L)
@@ -46,7 +46,7 @@ test_that("Codex skills install at project scope", {
       project = project,
       overwrite = TRUE
     ),
-    "Installed BPS"
+    "\\$breeding-scheme-drafter"
   )
   expect_length(replaced, 2L)
 })
